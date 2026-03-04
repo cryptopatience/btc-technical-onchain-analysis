@@ -998,12 +998,22 @@ if not news_data:
     col_ta, col_oc = st.columns(2)
     with col_ta:
         st.markdown("**📊 기술적 분석 키워드 (예시)**")
-        for kw in TA_KEYWORDS[:20]:
-            st.markdown(f'<span class="keyword-chip">{kw}</span>', unsafe_allow_html=True)
+        kws = TA_KEYWORDS[:20]
+        mid = len(kws) // 2
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown(" ".join(f'<span class="keyword-chip">{kw}</span>' for kw in kws[:mid]), unsafe_allow_html=True)
+        with c2:
+            st.markdown(" ".join(f'<span class="keyword-chip">{kw}</span>' for kw in kws[mid:]), unsafe_allow_html=True)
     with col_oc:
         st.markdown("**🔗 온체인 분석 키워드 (예시)**")
-        for kw in ONCHAIN_KEYWORDS[:20]:
-            st.markdown(f'<span class="keyword-chip" style="color:#3b82f6;border-color:rgba(59,130,246,0.35);background:rgba(59,130,246,0.12)">{kw}</span>', unsafe_allow_html=True)
+        kws = ONCHAIN_KEYWORDS[:20]
+        mid = len(kws) // 2
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown(" ".join(f'<span class="keyword-chip" style="color:#3b82f6;border-color:rgba(59,130,246,0.35);background:rgba(59,130,246,0.12)">{kw}</span>' for kw in kws[:mid]), unsafe_allow_html=True)
+        with c2:
+            st.markdown(" ".join(f'<span class="keyword-chip" style="color:#3b82f6;border-color:rgba(59,130,246,0.35);background:rgba(59,130,246,0.12)">{kw}</span>' for kw in kws[mid:]), unsafe_allow_html=True)
     st.stop()
 
 
