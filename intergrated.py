@@ -575,6 +575,38 @@ PROMPT_OC_DEEP     = """다음은 {date} (KST) 기준 비트코인 온체인 분
 PROMPT_M7_QUICK    = """다음은 {date} (KST) 기준 Magnificent 7 관련 기사들입니다.\n{content}\n위 내용만을 바탕으로 한국어 Quick Summary를 작성해주세요.\n1. **M7 전체 시장 분위기**\n2. **종목별 핵심 이슈** (티커 명시)\n3. **기술적 주목 레벨**\n4. **단기 투자 시사점**\n5. **한줄 M7 요약**"""
 PROMPT_M7_DEEP     = """다음은 {date} (KST) 기준 Magnificent 7 관련 기사들입니다.\n{content}\n위 내용만을 바탕으로 한국어 Deep Dive 분석을 작성해주세요.\n1. **기술적 분석 종목별 현황**\n2. **펀더멘털 분석**\n3. **애널리스트 의견 종합**\n4. **섹터 및 매크로 연관성**\n5. **종목별 리스크 및 기회 요인**"""
 
+DISCORD_WEBHOOK_URL = (
+    get_secret("DISCORD_WEBHOOK_URL")
+    or "https://discord.com/api/webhooks/1487415854839894076/i2HkxX91ZbcWFzOHe9QZjLvNNXPl-j6t1rZs2hnQcvC0gbzk0l0Ohyce2nXU5C3IYD0A"
+)
+
+PROMPT_COMBINED = """다음은 {date} (KST) 기준 각 시장별 AI Deep Dive 분석 결과입니다.
+
+{sections}
+
+위 분석들을 종합하여 한국어로 AI 종합 분석 리포트를 작성해주세요.
+
+1. **매크로 환경 및 주요 리스크 요인**
+   - 주식 시장과 비트코인에 공통으로 영향을 미치는 매크로 요인
+   - 현재 가장 주목해야 할 리스크
+
+2. **BTC 포지셔닝 전략**
+   - 기술적 분석 + 온체인 분석을 종합한 BTC 현재 상황 평가
+   - 단기(1주일) / 중기(1개월) 전망
+
+3. **M7 및 미국 주식 전망**
+   - 주식 시장과 M7 분석을 종합한 현재 투자 환경
+   - 주목해야 할 종목 및 섹터
+
+4. **크립토 vs 전통 자산 상관관계**
+   - 비트코인과 주식 시장의 상관관계 분석
+   - 자산 배분 관점에서의 시사점
+
+5. **결론: 오늘의 핵심 인사이트 3가지**
+   - 가장 중요한 관찰 사항 3가지를 bullet point로 명확히 제시
+
+전문적이고 날카로운 금융 분석 리포트 톤으로 작성해주세요."""
+
 
 # ── AI 요약 ────────────────────────────────────────
 def summarize_gemini(news_list, api_key, prompt_quick, prompt_deep):
@@ -632,6 +664,87 @@ def summarize_openai(news_list, api_key, prompt_quick, prompt_deep):
     except Exception as e:
         st.warning(f"GPT Deep 오류: {e}")
     return q, d
+
+
+def send_discord(text: str, webhook_url: str = DISCORD_WEBHOOK_URL) -> bool:
+    """Discord 웹훅으로 메시지 전송 (2000자 초과 시 청크 분할)"""
+    if not text or not webhook_url:
+        return False
+    chunks, remaining = [], text
+    while remaining:
+        chunks.append(remaining[:1900])
+        remaining = remaining[1900:]
+    total = len(chunks)
+    success = True
+    for i, chunk in enumerate(chunks):
+        header = f"**[{i+1}/{total}]**\n" if total > 1 else ""
+        try:
+            r = requests.post(webhook_url, json={"content": header + chunk}, timeout=15)
+            if r.status_code not in (200, 204):
+                success = False
+            if i < total - 1:
+                import time as _time; _time.sleep(0.5)
+        except Exception:
+            success = False
+    return success
+
+
+def summarize_combined_gemini(deep_dives: dict, api_key: str) -> str:
+    try:
+        from google import genai
+        from google.genai import types
+    except ImportError:
+        return ""
+    _labels = {
+        "stock_": "📈 미국 주식 시장 분석",
+        "coin_":  "🪙 코인 시장 분석",
+        "ta_":    "📊 BTC 기술적 분석",
+        "oc_":    "🔗 BTC 온체인 분석",
+        "m7_":    "🏆 M7 기술적 분석",
+    }
+    sections = "\n\n".join(
+        f"=== {_labels[p]} ===\n{deep_dives[p][:3000]}"
+        for p in _labels if p in deep_dives and deep_dives[p]
+    )
+    if not sections:
+        return ""
+    client = genai.Client(api_key=api_key)
+    try:
+        r = client.models.generate_content(
+            model="gemini-2.5-pro",
+            contents=PROMPT_COMBINED.format(date=TODAY_STR, sections=sections),
+            config=types.GenerateContentConfig(temperature=0.35, max_output_tokens=16000))
+        return r.text if r.text is not None else r.candidates[0].content.parts[0].text or ""
+    except Exception as e:
+        return f"[Gemini 오류: {e}]"
+
+
+def summarize_combined_openai(deep_dives: dict, api_key: str) -> str:
+    try:
+        from openai import OpenAI
+    except ImportError:
+        return ""
+    _labels = {
+        "stock_": "📈 미국 주식 시장 분석",
+        "coin_":  "🪙 코인 시장 분석",
+        "ta_":    "📊 BTC 기술적 분석",
+        "oc_":    "🔗 BTC 온체인 분석",
+        "m7_":    "🏆 M7 기술적 분석",
+    }
+    sections = "\n\n".join(
+        f"=== {_labels[p]} ===\n{deep_dives[p][:2000]}"
+        for p in _labels if p in deep_dives and deep_dives[p]
+    )
+    if not sections:
+        return ""
+    client = OpenAI(api_key=api_key)
+    try:
+        return client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": PROMPT_COMBINED.format(date=TODAY_STR, sections=sections)}],
+            max_tokens=4000, temperature=0.35).choices[0].message.content or ""
+    except Exception as e:
+        return f"[GPT 오류: {e}]"
 
 
 # ══════════════════════════════════════════════════
@@ -1224,14 +1337,52 @@ def filter_m7_news(news_list, selected_tickers):
 # ══════════════════════════════════════════════════
 # ── 세션 초기화 ───────────────────────────────────
 # ══════════════════════════════════════════════════
+CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "analysis_cache.json")
+
+
+def load_cache():
+    """파일 캐시 → 세션 스테이트로 복원 (앱 시작 시 1회)"""
+    if st.session_state.get("_cache_loaded"):
+        return
+    try:
+        import json
+        with open(CACHE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        for k, v in data.items():
+            if k not in st.session_state:
+                st.session_state[k] = v
+    except FileNotFoundError:
+        pass
+    except Exception:
+        pass
+    st.session_state["_cache_loaded"] = True
+
+
+def save_cache():
+    """세션 스테이트 → 파일 캐시로 저장"""
+    try:
+        import json
+        keys_to_save = []
+        for pfx in ("stock_","coin_","ta_","oc_","m7_","combined_"):
+            for k in ("news_data","source_stats","summary_quick","summary_deep","provider"):
+                keys_to_save.append(f"{pfx}{k}")
+        keys_to_save += ["combined_summary_deep", "combined_provider"]
+        data = {k: st.session_state[k] for k in keys_to_save if k in st.session_state}
+        with open(CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
 def init_session():
-    for prefix in ("stock_","coin_","ta_","oc_","m7_"):
+    for prefix in ("stock_","coin_","ta_","oc_","m7_","combined_"):
         for key in ("news_data","source_stats","summary_quick","summary_deep","provider"):
             fk = f"{prefix}{key}"
             if fk not in st.session_state:
                 st.session_state[fk] = [] if key=="news_data" else ({} if key=="source_stats" else "")
 
 init_session()
+load_cache()
 
 
 # ══════════════════════════════════════════════════
@@ -1253,21 +1404,24 @@ with st.sidebar:
         "📊  BTC 기술적 분석",
         "🔗  BTC 온체인 분석",
         "🏆  미국주식 기술적 분석",
+        "🤖  AI 종합분석",
     ], label_visibility="collapsed")
 
     nav_mode = {
-        "📈  주식 뉴스":      "stock",
-        "🪙  코인 뉴스":      "coin",
-        "📊  BTC 기술적 분석": "ta",
-        "🔗  BTC 온체인 분석": "oc",
-        "🏆  미국주식 기술적 분석":   "m7",
+        "📈  주식 뉴스":          "stock",
+        "🪙  코인 뉴스":          "coin",
+        "📊  BTC 기술적 분석":     "ta",
+        "🔗  BTC 온체인 분석":     "oc",
+        "🏆  미국주식 기술적 분석": "m7",
+        "🤖  AI 종합분석":         "combined",
     }[mode_label]
 
-    is_stock = nav_mode == "stock"
-    is_coin  = nav_mode == "coin"
-    is_ta    = nav_mode == "ta"
-    is_oc    = nav_mode == "oc"
-    is_m7    = nav_mode == "m7"
+    is_stock    = nav_mode == "stock"
+    is_coin     = nav_mode == "coin"
+    is_ta       = nav_mode == "ta"
+    is_oc       = nav_mode == "oc"
+    is_m7       = nav_mode == "m7"
+    is_combined = nav_mode == "combined"
 
     st.markdown('<div class="cq-divider"></div>', unsafe_allow_html=True)
 
@@ -1316,6 +1470,12 @@ with st.sidebar:
         src_cd     = st.checkbox("CoinDesk",                value=True)
         src_reddit = st.checkbox("Reddit BitcoinMarkets",   value=True)
         run_label = "BTC 기술적 분석 수집" if is_ta else "BTC 온체인 분석 수집"
+
+    elif is_combined:
+        st.markdown("**수집 대상 (자동)**")
+        for _cl in ["📈 주식 뉴스", "🪙 코인 뉴스", "📊 BTC 기술적 분석", "🔗 BTC 온체인 분석", "🏆 M7 기술적 분석"]:
+            st.checkbox(_cl, value=True, disabled=True, key=f"_combined_chk_{_cl}")
+        run_label = "AI 종합분석 실행"
 
     else:
         st.markdown("**종목 선택**")
@@ -1383,6 +1543,143 @@ if run_btn:
         pd_ = PROMPT_TA_DEEP if is_ta else PROMPT_OC_DEEP
         post_filter = filter_ta_news if is_ta else filter_onchain_news
 
+    elif is_combined:
+        # 모드별 기본 수집 설정 (combined 실행 시 자동 수집)
+        _all_m7 = list(M7_STOCKS.keys())
+        _auto_tasks = {
+            "stock_": {
+                "label": "📈 주식 뉴스",
+                "tasks": [
+                    ("Yahoo Finance", fetch_rss_feed, ["https://finance.yahoo.com/news/rssindex", "Yahoo Finance"]),
+                    ("CNBC",          fetch_rss_feed, ["https://search.cnbc.com/rs/search/combinedcms/view.xml?profile=120000000", "CNBC"]),
+                    ("MarketWatch",   fetch_rss_feed, ["http://feeds.marketwatch.com/marketwatch/topstories/", "MarketWatch"]),
+                    ("MNI Markets",   fetch_mni_markets, []),
+                    ("MKT News",      fetch_mktnews, []),
+                ] + ([("Finnhub API", fetch_finnhub, [FINNHUB_API_KEY])] if FINNHUB_API_KEY else []),
+                "pq": PROMPT_STOCK_QUICK, "pd": PROMPT_STOCK_DEEP, "filter": None,
+            },
+            "coin_": {
+                "label": "🪙 코인 뉴스",
+                "tasks": [
+                    ("CoinDesk",      fetch_coindesk, []),
+                    ("cryptonews.net",fetch_cryptonews_net, []),
+                    ("coincarp.com",  fetch_coincarp, []),
+                    ("The Block",     fetch_theblock_rss, []),
+                    ("cryptonews.com",fetch_cryptonews_com, []),
+                    ("Decrypt",       fetch_decrypt, []),
+                ] + ([("CryptoPanic", fetch_cryptopanic, [CRYPTOPANIC_API_KEY])] if CRYPTOPANIC_API_KEY else []),
+                "pq": PROMPT_COIN_QUICK, "pd": PROMPT_COIN_DEEP, "filter": None,
+            },
+            "ta_": {
+                "label": "📊 BTC 기술적 분석",
+                "tasks": [
+                    ("CoinTelegraph", fetch_cointelegraph_ta, []),
+                    ("AMBCrypto",     fetch_ambcrypto, []),
+                    ("Glassnode",     fetch_glassnode_insights, []),
+                    ("CryptoSlate",   fetch_cryptoslate_research, []),
+                    ("Coinglass",     fetch_coinglass_news, []),
+                    ("The Block",     fetch_theblock_research, []),
+                    ("CoinDesk",      fetch_coindesk_analysis, []),
+                    ("Reddit",        fetch_reddit_btcmarkets, []),
+                ],
+                "pq": PROMPT_TA_QUICK, "pd": PROMPT_TA_DEEP, "filter": filter_ta_news,
+            },
+            "oc_": {
+                "label": "🔗 BTC 온체인 분석",
+                "tasks": [
+                    ("CoinTelegraph", fetch_cointelegraph_ta, []),
+                    ("AMBCrypto",     fetch_ambcrypto, []),
+                    ("Glassnode",     fetch_glassnode_insights, []),
+                    ("CryptoSlate",   fetch_cryptoslate_research, []),
+                    ("Coinglass",     fetch_coinglass_news, []),
+                    ("The Block",     fetch_theblock_research, []),
+                    ("CoinDesk",      fetch_coindesk_analysis, []),
+                    ("Reddit",        fetch_reddit_btcmarkets, []),
+                ],
+                "pq": PROMPT_OC_QUICK, "pd": PROMPT_OC_DEEP, "filter": filter_onchain_news,
+            },
+            "m7_": {
+                "label": "🏆 M7 기술적 분석",
+                "tasks": [
+                    ("Yahoo Finance", fetch_yahoo_finance_m7, [_all_m7]),
+                    ("Benzinga",      fetch_benzinga_m7, [_all_m7]),
+                    ("MarketWatch",   fetch_marketwatch_m7, []),
+                    ("CNBC",          fetch_cnbc_m7, []),
+                    ("SeekingAlpha",  fetch_seekingalpha_m7, [_all_m7]),
+                    ("Reddit r/stocks", fetch_reddit_stocks_m7, []),
+                ] + ([("Finnhub", fetch_finnhub_m7, [FINNHUB_API_KEY, _all_m7])] if FINNHUB_API_KEY else []),
+                "pq": PROMPT_M7_QUICK, "pd": PROMPT_M7_DEEP,
+                "filter": lambda nl: filter_m7_news(nl, _all_m7),
+            },
+        }
+
+        with st.status("🤖 AI 종합분석 실행 중...", expanded=True) as _cstatus:
+            _deep_dives = {}
+
+            for _cp, _cfg in _auto_tasks.items():
+                _cl = _cfg["label"]
+                _existing = st.session_state.get(f"{_cp}summary_deep", "")
+                if _existing:
+                    _deep_dives[_cp] = _existing
+                    st.write(f"✅ {_cl}: 기존 분석 사용")
+                    continue
+
+                # 기존 데이터 없으면 자동 수집
+                st.write(f"📡 {_cl} 수집 중...")
+                _raw = []
+                for _, _tfn, _targs in _cfg["tasks"]:
+                    try:
+                        _raw += _tfn(*_targs)
+                    except Exception:
+                        pass
+                _raw = dedup(_raw)
+                if _cfg["filter"]:
+                    _raw = _cfg["filter"](_raw)
+                _raw.sort(key=lambda x: x.get("published_at", ""), reverse=True)
+
+                if not _raw:
+                    st.write(f"  ⚠️ {_cl}: 수집된 기사 없음")
+                    continue
+
+                st.write(f"  → {len(_raw)}건 수집. AI 분석 중...")
+                _q, _d = "", ""
+                if use_ai and ai_providers:
+                    if "Gemini 2.5 Pro" in ai_providers and GEMINI_API_KEY:
+                        _q, _d = summarize_gemini(_raw, GEMINI_API_KEY, _cfg["pq"], _cfg["pd"])
+                    elif "GPT-4o-mini" in ai_providers and OPENAI_API_KEY:
+                        _q, _d = summarize_openai(_raw, OPENAI_API_KEY, _cfg["pq"], _cfg["pd"])
+
+                st.session_state[f"{_cp}news_data"]     = _raw
+                st.session_state[f"{_cp}summary_quick"] = _q
+                st.session_state[f"{_cp}summary_deep"]  = _d
+                if _d:
+                    _deep_dives[_cp] = _d
+                    st.write(f"  ✅ {_cl}: 분석 완료")
+                else:
+                    st.write(f"  ⚠️ {_cl}: AI 분석 없음 (API 키 확인)")
+
+            if not _deep_dives:
+                st.error("모든 모드에서 분석 생성 실패. API 키를 확인하세요.")
+                _cstatus.update(label="❌ 실패", state="error")
+            else:
+                _combined_result, _used_prov = "", ""
+                if use_ai and ai_providers:
+                    if "Gemini 2.5 Pro" in ai_providers and GEMINI_API_KEY:
+                        st.write("🤖 Gemini 2.5 Pro 종합분석 생성 중...")
+                        _combined_result = summarize_combined_gemini(_deep_dives, GEMINI_API_KEY)
+                        _used_prov = "Gemini 2.5 Pro"
+                    elif "GPT-4o-mini" in ai_providers and OPENAI_API_KEY:
+                        st.write("🤖 GPT-4o-mini 종합분석 생성 중...")
+                        _combined_result = summarize_combined_openai(_deep_dives, OPENAI_API_KEY)
+                        _used_prov = "GPT-4o-mini"
+                    else:
+                        st.write("⚠️ AI API 키가 없습니다.")
+                st.session_state["combined_summary_deep"] = _combined_result
+                st.session_state["combined_provider"]     = _used_prov
+                _cstatus.update(label="✅ 종합분석 완료!", state="complete")
+                save_cache()
+        st.rerun()
+
     else:
         tasks = []
         if src_yahoo_m7: tasks.append(("Yahoo Finance", fetch_yahoo_finance_m7, [selected_tickers]))
@@ -1441,12 +1738,13 @@ if run_btn:
             st.session_state[f"{prefix}provider"]      = " + ".join(used)
 
         status.update(label=f"✅ 수집 완료 — {len(filtered)}건", state="complete")
+        save_cache()
 
 
 # ══════════════════════════════════════════════════
 # ── 메인 화면 ─────────────────────────────────────
 # ══════════════════════════════════════════════════
-prefix        = {"stock":"stock_","coin":"coin_","ta":"ta_","oc":"oc_","m7":"m7_"}[nav_mode]
+prefix        = {"stock":"stock_","coin":"coin_","ta":"ta_","oc":"oc_","m7":"m7_","combined":"combined_"}[nav_mode]
 news_data     = st.session_state[f"{prefix}news_data"]
 source_stats  = st.session_state[f"{prefix}source_stats"]
 summary_quick = st.session_state[f"{prefix}summary_quick"]
@@ -1455,11 +1753,12 @@ provider      = st.session_state[f"{prefix}provider"]
 
 # 모드별 설정
 MODE_CFG = {
-    "stock": {"title":"📈 미국 주식 뉴스",   "accent":"#3B82F6", "icon":"📈"},
-    "coin":  {"title":"🪙 코인 뉴스",        "accent":"#F7931A", "icon":"🪙"},
-    "ta":    {"title":"₿ BTC 기술적 분석",   "accent":"#F59E0B", "icon":"📊"},
-    "oc":    {"title":"₿ BTC 온체인 분석",   "accent":"#8B5CF6", "icon":"🔗"},
-    "m7":    {"title":"🏆 미국주식 기술적 분석", "accent":"#10B981", "icon":"🏆"},
+    "stock":    {"title":"📈 미국 주식 뉴스",      "accent":"#3B82F6", "icon":"📈"},
+    "coin":     {"title":"🪙 코인 뉴스",           "accent":"#F7931A", "icon":"🪙"},
+    "ta":       {"title":"₿ BTC 기술적 분석",      "accent":"#F59E0B", "icon":"📊"},
+    "oc":       {"title":"₿ BTC 온체인 분석",      "accent":"#8B5CF6", "icon":"🔗"},
+    "m7":       {"title":"🏆 미국주식 기술적 분석", "accent":"#10B981", "icon":"🏆"},
+    "combined": {"title":"🤖 AI 종합분석",         "accent":"#7C3AED", "icon":"🤖"},
 }
 cfg    = MODE_CFG[nav_mode]
 accent = cfg["accent"]
@@ -1477,6 +1776,55 @@ st.markdown(f"""
 </div>
 <div class="cq-content">
 """, unsafe_allow_html=True)
+
+# ── 종합분석 모드 전용 화면
+if is_combined:
+    _cs = st.session_state.get("combined_summary_deep", "")
+    _cp = st.session_state.get("combined_provider", "")
+
+    # Discord 발송 현황 카드
+    try:
+        import json as _json
+        _cache = _json.load(open(CACHE_FILE, encoding="utf-8")) if os.path.exists(CACHE_FILE) else {}
+        _last_sent = _cache.get("discord_last_sent", "")
+    except Exception:
+        _last_sent = ""
+    _next_kst = NOW_KST.replace(hour=8, minute=0, second=0, microsecond=0)
+    if NOW_KST.hour >= 8:
+        _next_kst += datetime.timedelta(days=1)
+    _next_str = _next_kst.strftime("%Y-%m-%d 08:00 KST")
+    if _last_sent:
+        _discord_badge = f'<span style="background:#D1FAE5;color:#065F46;border:1px solid #6EE7B7;padding:3px 10px;border-radius:6px;font-size:.8rem;font-weight:700">✅ 마지막 발송: {_last_sent}</span>'
+    else:
+        _discord_badge = '<span style="background:#F3F4F6;color:#6B7280;border:1px solid #E5E7EB;padding:3px 10px;border-radius:6px;font-size:.8rem;font-weight:700">— 아직 발송 없음</span>'
+    st.markdown(f"""
+    <div style="background:#FFFFFF;border:1px solid #E5E7EB;border-radius:10px;padding:12px 18px;margin-bottom:16px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+      <span style="font-size:.85rem;color:#374151;font-weight:600">📨 Discord 자동 발송</span>
+      {_discord_badge}
+      <span style="font-size:.8rem;color:#9CA3AF;margin-left:auto">다음 예정: {_next_str}</span>
+    </div>""", unsafe_allow_html=True)
+
+    if not _cs:
+        st.markdown("""
+        <div class="cq-empty">
+          <div class="empty-icon">🤖</div>
+          <h3>AI 종합분석</h3>
+          <p>사이드바의 <b>🚀 AI 종합분석 실행</b> 버튼을 클릭하세요.<br>
+          5개 모드 뉴스 수집 및 AI 분석이 자동으로 실행됩니다.</p>
+        </div>""", unsafe_allow_html=True)
+    else:
+        _pv = f" — {_cp}" if _cp else ""
+        st.markdown(f"""
+        <div class="cq-ai-card">
+          <div class="cq-ai-header">
+            <div class="cq-ai-dot" style="background:#7C3AED"></div>
+            <div class="cq-ai-title">🤖 AI 종합분석 리포트</div>
+            <div class="cq-ai-provider">{_pv} · {TODAY_STR} KST</div>
+          </div>
+        </div>""", unsafe_allow_html=True)
+        st.markdown(_cs)
+    st.markdown("</div>", unsafe_allow_html=True)
+    st.stop()
 
 # ── 빈 상태
 if not news_data:
