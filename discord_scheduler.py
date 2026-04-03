@@ -21,7 +21,7 @@ load_dotenv()
 # ── 설정 ──────────────────────────────────────────
 DISCORD_WEBHOOK_URL = os.getenv(
     "DISCORD_WEBHOOK_URL",
-    "https://discord.com/api/webhooks/1487415854839894076/i2HkxX91ZbcWFzOHe9QZjLvNNXPl-j6t1rZs2hnQcvC0gbzk0l0Ohyce2nXU5C3IYD0A",
+    "https://discord.com/api/webhooks/1489587323145556089/bU3SPqYHML4R-EWap7BpkEuaLCOA4iJs2KRjMPciqr_TKbvQGaPylathyi9hJyLDD0vb",
 )
 OPENAI_API_KEY  = os.getenv("OPENAI_API_KEY", "")
 GEMINI_API_KEY  = os.getenv("GEMINI_API_KEY", "")

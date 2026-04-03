@@ -69,6 +69,7 @@ if APP_PASSWORD and not st.session_state.authenticated:
         if st.button("로그인", type="primary", use_container_width=True):
             if pw == APP_PASSWORD:
                 st.session_state.authenticated = True
+                st.session_state["auto_run_combined_on_login"] = True
                 st.rerun()
             else:
                 st.error("비밀번호가 틀렸습니다.")
@@ -575,10 +576,7 @@ PROMPT_OC_DEEP     = """다음은 {date} (KST) 기준 비트코인 온체인 분
 PROMPT_M7_QUICK    = """다음은 {date} (KST) 기준 Magnificent 7 관련 기사들입니다.\n{content}\n위 내용만을 바탕으로 한국어 Quick Summary를 작성해주세요.\n1. **M7 전체 시장 분위기**\n2. **종목별 핵심 이슈** (티커 명시)\n3. **기술적 주목 레벨**\n4. **단기 투자 시사점**\n5. **한줄 M7 요약**"""
 PROMPT_M7_DEEP     = """다음은 {date} (KST) 기준 Magnificent 7 관련 기사들입니다.\n{content}\n위 내용만을 바탕으로 한국어 Deep Dive 분석을 작성해주세요.\n1. **기술적 분석 종목별 현황**\n2. **펀더멘털 분석**\n3. **애널리스트 의견 종합**\n4. **섹터 및 매크로 연관성**\n5. **종목별 리스크 및 기회 요인**"""
 
-DISCORD_WEBHOOK_URL = (
-    get_secret("DISCORD_WEBHOOK_URL")
-    or "https://discord.com/api/webhooks/1487415854839894076/i2HkxX91ZbcWFzOHe9QZjLvNNXPl-j6t1rZs2hnQcvC0gbzk0l0Ohyce2nXU5C3IYD0A"
-)
+DISCORD_WEBHOOK_URL = (get_secret("DISCORD_WEBHOOK_URL") or "").strip()
 
 PROMPT_COMBINED = """다음은 {date} (KST) 기준 각 시장별 AI Deep Dive 분석 결과입니다.
 
@@ -750,6 +748,190 @@ def summarize_combined_openai(deep_dives: dict, api_key: str) -> str:
 # ══════════════════════════════════════════════════
 # ── 주식 뉴스 스크래퍼 ────────────────────────────
 # ══════════════════════════════════════════════════
+def _now_kst_dynamic() -> datetime.datetime:
+    return datetime.datetime.utcnow() + datetime.timedelta(hours=9)
+
+
+def _auto_send_combined_to_discord(combined_text: str, trigger_source: str = "manual") -> str:
+    webhook_url = (DISCORD_WEBHOOK_URL or "").strip()
+    if not webhook_url:
+        st.warning("DISCORD_WEBHOOK_URL이 설정되지 않아 Discord 자동 발송을 건너뜁니다.")
+        return "success_skipped_missing_webhook"
+
+    now_kst = _now_kst_dynamic()
+    today_str = now_kst.strftime("%Y-%m-%d")
+    if st.session_state.get("discord_last_sent_date", "") == today_str:
+        st.info("오늘은 이미 Discord 발송을 완료하여 자동 발송을 건너뜁니다.")
+        return "success_skipped_daily_limit"
+
+    trigger_text = " (login auto-run)" if trigger_source == "login" else ""
+    header = (
+        f"🤖 **AI 종합분석 리포트**{trigger_text} | {today_str} KST\n"
+        f"{'-' * 40}\n\n"
+    )
+
+    if send_discord(header + combined_text, webhook_url=webhook_url):
+        st.session_state["discord_last_sent"] = now_kst.strftime("%Y-%m-%d %H:%M KST")
+        st.session_state["discord_last_sent_date"] = today_str
+        st.success("Discord 자동 발송 완료")
+        return "success_sent"
+
+    st.warning("Discord 자동 발송에 실패했습니다.")
+    return "success_send_failed"
+
+
+def run_combined_analysis_pipeline(use_ai: bool, ai_providers: list, trigger_source: str = "manual") -> bool:
+    run_started = _now_kst_dynamic()
+    st.session_state["combined_last_run_at"] = run_started.strftime("%Y-%m-%d %H:%M KST")
+    st.session_state["combined_last_run_status"] = "running"
+    save_cache()
+
+    _all_m7 = list(M7_STOCKS.keys())
+    _auto_tasks = {
+        "stock_": {
+            "label": "📈 주식 뉴스",
+            "tasks": [
+                ("Yahoo Finance", fetch_rss_feed, ["https://finance.yahoo.com/news/rssindex", "Yahoo Finance"]),
+                ("CNBC",          fetch_rss_feed, ["https://search.cnbc.com/rs/search/combinedcms/view.xml?profile=120000000", "CNBC"]),
+                ("MarketWatch",   fetch_rss_feed, ["http://feeds.marketwatch.com/marketwatch/topstories/", "MarketWatch"]),
+                ("MNI Markets",   fetch_mni_markets, []),
+                ("MKT News",      fetch_mktnews, []),
+            ] + ([("Finnhub API", fetch_finnhub, [FINNHUB_API_KEY])] if FINNHUB_API_KEY else []),
+            "pq": PROMPT_STOCK_QUICK, "pd": PROMPT_STOCK_DEEP, "filter": None,
+        },
+        "coin_": {
+            "label": "🪙 코인 뉴스",
+            "tasks": [
+                ("CoinDesk",      fetch_coindesk, []),
+                ("cryptonews.net",fetch_cryptonews_net, []),
+                ("coincarp.com",  fetch_coincarp, []),
+                ("The Block",     fetch_theblock_rss, []),
+                ("cryptonews.com",fetch_cryptonews_com, []),
+                ("Decrypt",       fetch_decrypt, []),
+            ] + ([("CryptoPanic", fetch_cryptopanic, [CRYPTOPANIC_API_KEY])] if CRYPTOPANIC_API_KEY else []),
+            "pq": PROMPT_COIN_QUICK, "pd": PROMPT_COIN_DEEP, "filter": None,
+        },
+        "ta_": {
+            "label": "📊 BTC 기술적 분석",
+            "tasks": [
+                ("CoinTelegraph", fetch_cointelegraph_ta, []),
+                ("AMBCrypto",     fetch_ambcrypto, []),
+                ("Glassnode",     fetch_glassnode_insights, []),
+                ("CryptoSlate",   fetch_cryptoslate_research, []),
+                ("Coinglass",     fetch_coinglass_news, []),
+                ("The Block",     fetch_theblock_research, []),
+                ("CoinDesk",      fetch_coindesk_analysis, []),
+                ("Reddit",        fetch_reddit_btcmarkets, []),
+            ],
+            "pq": PROMPT_TA_QUICK, "pd": PROMPT_TA_DEEP, "filter": filter_ta_news,
+        },
+        "oc_": {
+            "label": "🔗 BTC 온체인 분석",
+            "tasks": [
+                ("CoinTelegraph", fetch_cointelegraph_ta, []),
+                ("AMBCrypto",     fetch_ambcrypto, []),
+                ("Glassnode",     fetch_glassnode_insights, []),
+                ("CryptoSlate",   fetch_cryptoslate_research, []),
+                ("Coinglass",     fetch_coinglass_news, []),
+                ("The Block",     fetch_theblock_research, []),
+                ("CoinDesk",      fetch_coindesk_analysis, []),
+                ("Reddit",        fetch_reddit_btcmarkets, []),
+            ],
+            "pq": PROMPT_OC_QUICK, "pd": PROMPT_OC_DEEP, "filter": filter_onchain_news,
+        },
+        "m7_": {
+            "label": "🏆 M7 기술적 분석",
+            "tasks": [
+                ("Yahoo Finance", fetch_yahoo_finance_m7, [_all_m7]),
+                ("Benzinga",      fetch_benzinga_m7, [_all_m7]),
+                ("MarketWatch",   fetch_marketwatch_m7, []),
+                ("CNBC",          fetch_cnbc_m7, []),
+                ("SeekingAlpha",  fetch_seekingalpha_m7, [_all_m7]),
+                ("Reddit r/stocks", fetch_reddit_stocks_m7, []),
+            ] + ([("Finnhub", fetch_finnhub_m7, [FINNHUB_API_KEY, _all_m7])] if FINNHUB_API_KEY else []),
+            "pq": PROMPT_M7_QUICK, "pd": PROMPT_M7_DEEP,
+            "filter": lambda nl: filter_m7_news(nl, _all_m7),
+        },
+    }
+
+    with st.status("🤖 AI 종합분석 실행 중...", expanded=True) as _cstatus:
+        _deep_dives = {}
+
+        for _cp, _cfg in _auto_tasks.items():
+            _cl = _cfg["label"]
+            st.write(f"→ {_cl} 수집 중...")
+            _raw = []
+            for _, _tfn, _targs in _cfg["tasks"]:
+                try:
+                    _raw += _tfn(*_targs)
+                except Exception:
+                    pass
+            _raw = dedup(_raw)
+            if _cfg["filter"]:
+                _raw = _cfg["filter"](_raw)
+            _raw.sort(key=lambda x: x.get("published_at", ""), reverse=True)
+
+            if not _raw:
+                st.write(f"  - {_cl}: 수집된 뉴스 없음")
+                continue
+
+            st.write(f"  - {_cl}: {len(_raw)}건 수집, AI 분석 중...")
+            _q, _d = "", ""
+            if use_ai and ai_providers:
+                if "Gemini 2.5 Pro" in ai_providers and GEMINI_API_KEY:
+                    _q, _d = summarize_gemini(_raw, GEMINI_API_KEY, _cfg["pq"], _cfg["pd"])
+                elif "GPT-4o-mini" in ai_providers and OPENAI_API_KEY:
+                    _q, _d = summarize_openai(_raw, OPENAI_API_KEY, _cfg["pq"], _cfg["pd"])
+
+            st.session_state[f"{_cp}news_data"] = _raw
+            st.session_state[f"{_cp}summary_quick"] = _q
+            st.session_state[f"{_cp}summary_deep"] = _d
+            if _d:
+                _deep_dives[_cp] = _d
+                st.write(f"  - {_cl}: 분석 완료")
+            else:
+                st.write(f"  - {_cl}: 분석 결과 없음 (API 키 확인)")
+
+        if not _deep_dives:
+            st.session_state["combined_last_run_status"] = "failed_no_analysis"
+            st.session_state["combined_summary_deep"] = ""
+            st.session_state["combined_provider"] = ""
+            st.error("모든 모드에서 분석 생성에 실패했습니다. API 키를 확인하세요.")
+            _cstatus.update(label="❌ 종합분석 실패", state="error")
+            save_cache()
+            return False
+
+        _combined_result, _used_prov = "", ""
+        if use_ai and ai_providers:
+            if "Gemini 2.5 Pro" in ai_providers and GEMINI_API_KEY:
+                st.write("🤖 Gemini 2.5 Pro 종합분석 생성 중...")
+                _combined_result = summarize_combined_gemini(_deep_dives, GEMINI_API_KEY)
+                _used_prov = "Gemini 2.5 Pro"
+            elif "GPT-4o-mini" in ai_providers and OPENAI_API_KEY:
+                st.write("🤖 GPT-4o-mini 종합분석 생성 중...")
+                _combined_result = summarize_combined_openai(_deep_dives, OPENAI_API_KEY)
+                _used_prov = "GPT-4o-mini"
+            else:
+                st.write("⚠️ AI API key is not configured.")
+
+        st.session_state["combined_summary_deep"] = _combined_result
+        st.session_state["combined_provider"] = _used_prov
+
+        if not _combined_result:
+            st.session_state["combined_last_run_status"] = "failed_combined_generation"
+            st.error("종합분석 생성에 실패했습니다.")
+            _cstatus.update(label="❌ 종합분석 실패", state="error")
+            save_cache()
+            return False
+
+        send_status = _auto_send_combined_to_discord(_combined_result, trigger_source=trigger_source)
+        st.session_state["combined_last_run_status"] = send_status
+        st.session_state["combined_last_run_at"] = _now_kst_dynamic().strftime("%Y-%m-%d %H:%M KST")
+        _cstatus.update(label="✅ 종합분석 완료!", state="complete")
+        save_cache()
+        return True
+
+
 def fetch_finnhub(api_key: str) -> list:
     if not api_key: return []
     try:
@@ -1366,7 +1548,14 @@ def save_cache():
         for pfx in ("stock_","coin_","ta_","oc_","m7_","combined_"):
             for k in ("news_data","source_stats","summary_quick","summary_deep","provider"):
                 keys_to_save.append(f"{pfx}{k}")
-        keys_to_save += ["combined_summary_deep", "combined_provider"]
+        keys_to_save += [
+            "combined_summary_deep",
+            "combined_provider",
+            "discord_last_sent",
+            "discord_last_sent_date",
+            "combined_last_run_at",
+            "combined_last_run_status",
+        ]
         data = {k: st.session_state[k] for k in keys_to_save if k in st.session_state}
         with open(CACHE_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
@@ -1380,6 +1569,9 @@ def init_session():
             fk = f"{prefix}{key}"
             if fk not in st.session_state:
                 st.session_state[fk] = [] if key=="news_data" else ({} if key=="source_stats" else "")
+    for k in ("discord_last_sent", "discord_last_sent_date", "combined_last_run_at", "combined_last_run_status"):
+        if k not in st.session_state:
+            st.session_state[k] = ""
 
 init_session()
 load_cache()
@@ -1504,6 +1696,12 @@ with st.sidebar:
 # ══════════════════════════════════════════════════
 # ── 수집 실행 ──────────────────────────────────────
 # ══════════════════════════════════════════════════
+auto_run_combined = bool(st.session_state.pop("auto_run_combined_on_login", False))
+if auto_run_combined:
+    st.info("로그인 후 AI 종합분석 자동 실행 중입니다.")
+    run_combined_analysis_pipeline(use_ai, ai_providers, trigger_source="login")
+    st.rerun()
+
 if run_btn:
     all_raw, source_map = [], {}
 
@@ -1544,6 +1742,9 @@ if run_btn:
         post_filter = filter_ta_news if is_ta else filter_onchain_news
 
     elif is_combined:
+        run_combined_analysis_pipeline(use_ai, ai_providers, trigger_source="manual")
+        st.rerun()
+
         # 모드별 기본 수집 설정 (combined 실행 시 자동 수집)
         _all_m7 = list(M7_STOCKS.keys())
         _auto_tasks = {
@@ -1783,24 +1984,50 @@ if is_combined:
     _cp = st.session_state.get("combined_provider", "")
 
     # Discord 발송 현황 카드
-    try:
-        import json as _json
-        _cache = _json.load(open(CACHE_FILE, encoding="utf-8")) if os.path.exists(CACHE_FILE) else {}
-        _last_sent = _cache.get("discord_last_sent", "")
-    except Exception:
-        _last_sent = ""
+    _last_sent = st.session_state.get("discord_last_sent", "")
+    _last_sent_date = st.session_state.get("discord_last_sent_date", "")
+    _last_run_at = st.session_state.get("combined_last_run_at", "")
+    _last_run_status = st.session_state.get("combined_last_run_status", "")
     _next_kst = NOW_KST.replace(hour=8, minute=0, second=0, microsecond=0)
     if NOW_KST.hour >= 8:
         _next_kst += datetime.timedelta(days=1)
     _next_str = _next_kst.strftime("%Y-%m-%d 08:00 KST")
-    if _last_sent:
-        _discord_badge = f'<span style="background:#D1FAE5;color:#065F46;border:1px solid #6EE7B7;padding:3px 10px;border-radius:6px;font-size:.8rem;font-weight:700">✅ 마지막 발송: {_last_sent}</span>'
+    _today_sent = (_last_sent_date == TODAY_STR)
+    if _today_sent:
+        _today_badge = '<span style="background:#D1FAE5;color:#065F46;border:1px solid #6EE7B7;padding:3px 10px;border-radius:6px;font-size:.8rem;font-weight:700">✅ 오늘 발송 완료</span>'
     else:
-        _discord_badge = '<span style="background:#F3F4F6;color:#6B7280;border:1px solid #E5E7EB;padding:3px 10px;border-radius:6px;font-size:.8rem;font-weight:700">— 아직 발송 없음</span>'
+        _today_badge = '<span style="background:#F3F4F6;color:#6B7280;border:1px solid #E5E7EB;padding:3px 10px;border-radius:6px;font-size:.8rem;font-weight:700">— 오늘 미발송</span>'
+
+    if _last_sent:
+        _last_sent_badge = f'<span style="background:#D1FAE5;color:#065F46;border:1px solid #6EE7B7;padding:3px 10px;border-radius:6px;font-size:.8rem;font-weight:700">✅ 마지막 발송: {_last_sent}</span>'
+    else:
+        _last_sent_badge = '<span style="background:#F3F4F6;color:#6B7280;border:1px solid #E5E7EB;padding:3px 10px;border-radius:6px;font-size:.8rem;font-weight:700">— 마지막 발송 기록 없음</span>'
+
+    _run_status_labels = {
+        "running": "⏳ 분석 실행 중",
+        "success_sent": "✅ 분석 완료 · Discord 발송 성공",
+        "success_skipped_daily_limit": "ℹ️ 오늘은 발송 스킵됨 (하루 1회 제한)",
+        "success_skipped_missing_webhook": "⚠️ 발송 스킵됨 (DISCORD_WEBHOOK_URL 미설정)",
+        "success_send_failed": "⚠️ 분석 완료 · Discord 발송 실패",
+        "failed_no_analysis": "❌ 분석 실패 (모드별 분석 생성 실패)",
+        "failed_combined_generation": "❌ 분석 실패 (종합 리포트 생성 실패)",
+    }
+    _run_status_text = _run_status_labels.get(_last_run_status, "— 실행 상태 없음")
+    _run_status_badge = (
+        f'<span style="background:#FEF3C7;color:#92400E;border:1px solid #FCD34D;padding:3px 10px;border-radius:6px;font-size:.8rem;font-weight:700">{_run_status_text}</span>'
+        if _last_run_status else
+        '<span style="background:#F3F4F6;color:#6B7280;border:1px solid #E5E7EB;padding:3px 10px;border-radius:6px;font-size:.8rem;font-weight:700">— 실행 상태 없음</span>'
+    )
+
+    if not DISCORD_WEBHOOK_URL:
+        st.warning("DISCORD_WEBHOOK_URL이 설정되지 않아 자동 Discord 발송이 비활성화되어 있습니다.")
     st.markdown(f"""
     <div style="background:#FFFFFF;border:1px solid #E5E7EB;border-radius:10px;padding:12px 18px;margin-bottom:16px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
       <span style="font-size:.85rem;color:#374151;font-weight:600">📨 Discord 자동 발송</span>
-      {_discord_badge}
+      {_today_badge}
+      {_last_sent_badge}
+      {_run_status_badge}
+      <span style="font-size:.8rem;color:#9CA3AF">마지막 실행: {_last_run_at or '-'}</span>
       <span style="font-size:.8rem;color:#9CA3AF;margin-left:auto">다음 예정: {_next_str}</span>
     </div>""", unsafe_allow_html=True)
 
