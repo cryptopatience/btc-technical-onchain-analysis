@@ -792,26 +792,15 @@ def _render_dual_gauge(btc_sentiment: str, stock_sentiment: str):
         from matplotlib.patches import Wedge
         from io import BytesIO
 
-        # 한국어 폰트 직접 로드
-        _ko_prop = None
+        # 한국어 폰트를 rcParams에 등록 (fontproperties+rotation 충돌 방지)
         for _fp in ["C:/Windows/Fonts/malgunbd.ttf", "C:/Windows/Fonts/malgun.ttf",
                     "C:/Windows/Fonts/NanumGothicBold.ttf", "C:/Windows/Fonts/NanumGothic.ttf"]:
-            try:
-                import os
-                if os.path.exists(_fp):
-                    fm.fontManager.addfont(_fp)
-                    _ko_prop = fm.FontProperties(fname=_fp)
-                    break
-            except Exception:
-                continue
-        if _ko_prop is None:
-            plt.rcParams["font.family"] = "sans-serif"
-
-        def _txt(ax, x, y, s, **kw):
-            """폰트 속성을 자동 적용하는 text 헬퍼."""
-            if _ko_prop:
-                kw.setdefault("fontproperties", _ko_prop)
-            return ax.text(x, y, s, **kw)
+            if os.path.exists(_fp):
+                fm.fontManager.addfont(_fp)
+                _font_name = fm.FontProperties(fname=_fp).get_name()
+                matplotlib.rcParams["font.family"] = _font_name
+                matplotlib.rcParams["axes.unicode_minus"] = False
+                break
 
         _val_map = {"극단적공포": 10, "공포": 30, "중립": 50, "탐욕": 70, "극단적탐욕": 90}
         _disp_map = {"극단적공포": "극단적 공포", "공포": "공포", "중립": "중립",
@@ -843,11 +832,11 @@ def _render_dual_gauge(btc_sentiment: str, stock_sentiment: str):
                 r = np.radians(mid_deg)
                 lx, ly = 0.77 * np.cos(r), 0.77 * np.sin(r)
                 rotation = mid_deg - 90
-                _txt(ax, lx, ly, label,
-                     ha="center", va="center", color="white",
-                     fontsize=6.5, fontweight="bold",
-                     rotation=rotation, rotation_mode="anchor",
-                     linespacing=1.15, zorder=10)
+                ax.text(lx, ly, label,
+                        ha="center", va="center", color="white",
+                        fontsize=6.5, fontweight="bold",
+                        rotation=rotation, rotation_mode="anchor",
+                        linespacing=1.15, zorder=10)
 
             # 섹션 경계선
             for deg in (0, 36, 72, 108, 144, 180):
@@ -870,13 +859,13 @@ def _render_dual_gauge(btc_sentiment: str, stock_sentiment: str):
 
             # 현재 심리 텍스트 (하단)
             if sentiment:
-                _txt(ax, 0, -0.17, _disp_map.get(sentiment, "—"),
-                     ha="center", va="top", color="white",
-                     fontsize=9, fontweight="bold")
+                ax.text(0, -0.17, _disp_map.get(sentiment, "—"),
+                        ha="center", va="top", color="white",
+                        fontsize=9, fontweight="bold")
 
             # 제목
-            _txt(ax, 0, 1.22, title, ha="center", va="center",
-                 color="#cccccc", fontsize=10, fontweight="bold")
+            ax.text(0, 1.22, title, ha="center", va="center",
+                    color="#cccccc", fontsize=10, fontweight="bold")
 
             # 눈금 (0 / 50 / 100)
             for val, txt in ((0, "0"), (50, "50"), (100, "100")):
