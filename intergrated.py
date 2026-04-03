@@ -514,10 +514,10 @@ def find_time_in_parents(element) -> str:
 
 
 # ── 뉴스 행 렌더링 (CryptoQuant 테이블 스타일) ──────
-def render_news_row(item: dict, idx: int) -> str:
-    """HTML 테이블 행 반환 (배치 렌더링용)"""
+def render_news_row(item: dict, idx: int = 0) -> str:  # noqa: ARG001
+    """북마크 카드 형태로 기사 한 건 렌더링."""
     import html as _html
-    title   = _html.escape(item.get("title", "") or "")
+    title   = _html.escape(item.get("title", "") or "(제목 없음)")
     url     = item.get("url", "")
     source  = item.get("source", "")
     pub     = item.get("published_at", "")
@@ -525,41 +525,56 @@ def render_news_row(item: dict, idx: int) -> str:
     color   = src_color(source)
     kst     = utc_to_kst(pub)
     ticker  = item.get("ticker", "")
-    matched = item.get("matched_keywords", [])
 
-    title_html = f'<a href="{url}" target="_blank">{title}</a>' if url else title
-    desc_html  = f'<div class="cq-row-desc">{desc[:180]}</div>' if desc and desc.lower() != title.lower() else ""
+    # 소스 아이콘 (최대 2글자 약어)
+    src_abbr = (_html.escape(source[:2]).upper()) if source else "—"
 
-    badges = f'<span class="cq-src-badge" style="background:{color}15;color:{color};border-color:{color}40">{_html.escape(source)}</span>'
-
+    # 추가 뱃지 (ticker, TA, 온체인)
+    meta_parts = [f'<span style="color:{color};font-weight:600">{_html.escape(source)}</span>']
     if ticker and ticker in M7_STOCKS:
         tc = M7_STOCKS[ticker]["color"]
         em = M7_STOCKS[ticker]["emoji"]
-        badges = f'<span class="cq-ticker-badge" style="background:{tc}15;color:{tc};border-color:{tc}40">{em} {ticker}</span>' + badges
+        meta_parts.append(f'<span style="color:{tc}">{em} {ticker}</span>')
+    if item.get("is_ta"):      meta_parts.append('<span style="color:#5dade2">📊TA</span>')
+    if item.get("is_onchain"): meta_parts.append('<span style="color:#a569bd">🔗온체인</span>')
+    if kst: meta_parts.append(f'<span style="color:#888">{kst}</span>')
+    meta_html = ' · '.join(meta_parts)
 
-    if item.get("is_ta"):
-        badges += ' <span class="cq-type-badge cq-type-ta">📊 TA</span>'
-    if item.get("is_onchain"):
-        badges += ' <span class="cq-type-badge cq-type-oc">🔗 온체인</span>'
-    if item.get("is_fund"):
-        badges += ' <span class="cq-type-badge cq-type-fund">💹 펀더멘털</span>'
+    # 설명 (제목과 다를 때만, 120자 제한)
+    desc_html = ""
+    if desc and desc.lower()[:60] != title.lower()[:60]:
+        desc_html = (f'<div style="font-size:.76rem;color:#9ca3af;margin-top:3px;'
+                     f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'
+                     f'{desc[:120]}</div>')
 
-    kw_chips = "".join(
-        f'<span class="cq-kw-chip">{_html.escape(kw)}</span>' for kw in matched[:3]
-    )
-    kw_html = f'<div style="margin-top:5px">{kw_chips}</div>' if kw_chips else ""
+    # 클릭 영역 전체를 링크로 감싸기
+    inner = f"""
+      <div style="display:flex;align-items:center;gap:11px;
+                  padding:9px 13px;margin:3px 0;
+                  background:#161b2e;border-radius:9px;
+                  border-left:3px solid {color};
+                  transition:background .15s;cursor:pointer"
+           onmouseover="this.style.background='#1e2540'"
+           onmouseout="this.style.background='#161b2e'">
+        <div style="min-width:34px;height:34px;background:{color}22;border-radius:6px;
+                    display:flex;align-items:center;justify-content:center;
+                    font-size:.65rem;font-weight:800;color:{color};flex-shrink:0">
+          {src_abbr}
+        </div>
+        <div style="flex:1;min-width:0;overflow:hidden">
+          <div style="font-size:.87rem;font-weight:600;color:#dde1f0;
+                      white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+            {title}
+          </div>
+          {desc_html}
+          <div style="font-size:.72rem;margin-top:4px">{meta_html}</div>
+        </div>
+        <div style="color:#4b5563;font-size:1.1rem;flex-shrink:0">›</div>
+      </div>"""
 
-    return f"""
-    <div class="cq-news-row">
-      <div class="cq-row-num">{idx}</div>
-      <div>
-        <div class="cq-row-title">{title_html}</div>
-        {desc_html}
-        {kw_html}
-      </div>
-      <div class="cq-row-badges">{badges}</div>
-      <div class="cq-row-time">{'🕐 ' + kst if kst else '—'}</div>
-    </div>"""
+    if url:
+        return f'<a href="{url}" target="_blank" rel="noopener noreferrer" style="text-decoration:none">{inner}</a>'
+    return inner
 
 
 # ══════════════════════════════════════════════════
@@ -2381,16 +2396,14 @@ elif is_ta or is_oc:
     elif type_filter == "둘다":    filtered = [n for n in filtered if n.get("is_ta") and n.get("is_onchain")]
 if filter_src != "전체": filtered = [n for n in filtered if n["source"]==filter_src]
 
-# ── 뉴스 테이블 렌더링
+# ── 뉴스 북마크 렌더링
 label_txt = "기사" if nav_mode in ("ta","oc","m7") else "뉴스"
-st.markdown(f"""
-<div class="cq-table-wrap">
-  <div class="cq-table-header">
-    <div>#</div><div>{label_txt} ({len(filtered)}건)</div>
-    <div>소스 / 유형</div><div>시간 (KST)</div>
-  </div>
-  {"".join(render_news_row(item, i+1) for i, item in enumerate(filtered))}
-</div>""", unsafe_allow_html=True)
+st.markdown(
+    f'<div style="font-size:.78rem;color:#6b7280;margin-bottom:6px">'
+    f'📌 {label_txt} {len(filtered)}건</div>'
+    + "".join(render_news_row(item) for item in filtered),
+    unsafe_allow_html=True,
+)
 
 # ── 푸터
 FOOTER_SRC = {
