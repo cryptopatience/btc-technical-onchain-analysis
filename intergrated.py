@@ -784,66 +784,74 @@ def _render_dual_gauge(btc_sentiment: str, stock_sentiment: str):
         _val_map = {"극단적공포": 10, "공포": 30, "중립": 50, "탐욕": 70, "극단적탐욕": 90}
         _disp_map = {"극단적공포": "극단적 공포", "공포": "공포", "중립": "중립",
                      "탐욕": "탐욕", "극단적탐욕": "극단적 탐욕"}
+        # (t1, t2, color, 중간각도, 짧은라벨)
         _sections = [
-            (180, 144, "#c0392b"),  # 극단적공포
-            (144, 108, "#e67e22"),  # 공포
-            (108,  72, "#95a5a6"),  # 중립
-            ( 72,  36, "#2ecc71"),  # 탐욕
-            ( 36,   0, "#16a085"),  # 극단적탐욕
+            (180, 144, "#c0392b", 162, "극단적\n공포"),
+            (144, 108, "#e67e22", 126, "공포"),
+            (108,  72, "#95a5a6",  90, "중립"),
+            ( 72,  36, "#2ecc71",  54, "탐욕"),
+            ( 36,   0, "#16a085",  18, "극단적\n탐욕"),
         ]
 
-        fig, axes = plt.subplots(1, 2, figsize=(5.2, 2.5))
+        fig, axes = plt.subplots(1, 2, figsize=(5.6, 2.8))
         fig.patch.set_facecolor("#0E1117")
 
         def _draw(ax, sentiment, title):
             value = _val_map.get(sentiment, 50) if sentiment else 50
             ax.set_facecolor("#0E1117")
-            ax.set_xlim(-1.35, 1.35)
-            ax.set_ylim(-0.55, 1.15)
+            ax.set_xlim(-1.45, 1.45)
+            ax.set_ylim(-0.60, 1.25)
             ax.set_aspect("equal")
             ax.axis("off")
 
-            for t1, t2, color in _sections:
-                ax.add_patch(Wedge((0, 0), 1.0, t2, t1, width=0.40,
+            for t1, t2, color, mid_deg, label in _sections:
+                ax.add_patch(Wedge((0, 0), 1.0, t2, t1, width=0.42,
                                    facecolor=color, edgecolor="#0E1117", linewidth=2))
+
+                # 섹션 라벨 (호 중앙, 반지름 0.79 위치)
+                r = np.radians(mid_deg)
+                lx, ly = 0.79 * np.cos(r), 0.79 * np.sin(r)
+                rotation = mid_deg - 90  # 호의 접선 방향
+                ax.text(lx, ly, label, ha="center", va="center",
+                        color="white", fontsize=5.2, fontweight="bold",
+                        rotation=rotation, rotation_mode="anchor",
+                        linespacing=1.1)
 
             # 섹션 경계 구분선
             for deg in (0, 36, 72, 108, 144, 180):
                 r = np.radians(deg)
-                ax.plot([0.60 * np.cos(r), 1.01 * np.cos(r)],
-                        [0.60 * np.sin(r), 1.01 * np.sin(r)],
+                ax.plot([0.58 * np.cos(r), 1.01 * np.cos(r)],
+                        [0.58 * np.sin(r), 1.01 * np.sin(r)],
                         color="#0E1117", lw=2, zorder=5)
 
             # 바늘
             angle = np.radians(180 - value * 1.8)
-            nx, ny = 0.70 * np.cos(angle), 0.70 * np.sin(angle)
+            nx, ny = 0.68 * np.cos(angle), 0.68 * np.sin(angle)
             ax.annotate("", xy=(nx, ny), xytext=(0, 0),
                         arrowprops=dict(arrowstyle="-|>", color="white",
                                         lw=1.8, mutation_scale=10))
             ax.add_patch(plt.Circle((0, 0), 0.055, color="white", zorder=12))
 
-            # 점수
+            # 점수 + 심리 텍스트
             if sentiment:
-                ax.text(0, 0.22, str(value), ha="center", va="center",
+                ax.text(0, 0.25, str(value), ha="center", va="center",
                         color="white", fontsize=14, fontweight="bold")
-                ax.text(0, -0.14, _disp_map.get(sentiment, "—"),
+                ax.text(0, -0.15, _disp_map.get(sentiment, "—"),
                         ha="center", va="top", color="white",
                         fontsize=8.5, fontweight="bold")
             else:
-                ax.text(0, 0.22, "—", ha="center", va="center",
+                ax.text(0, 0.25, "—", ha="center", va="center",
                         color="#888888", fontsize=12)
 
             # 제목
-            ax.text(0, 1.08, title, ha="center", va="center",
+            ax.text(0, 1.17, title, ha="center", va="center",
                     color="#cccccc", fontsize=9, fontweight="bold")
 
-            # 하단 라벨 (0 / 50 / 100)
+            # 하단 눈금 (0 / 50 / 100)
             for val, txt in ((0, "0"), (50, "50"), (100, "100")):
                 r = np.radians(180 - val * 1.8)
-                lx = 1.18 * np.cos(r)
-                ly = 1.18 * np.sin(r)
-                ax.text(lx, ly, txt, ha="center", va="center",
-                        color="#888888", fontsize=6.5)
+                ax.text(1.22 * np.cos(r), 1.22 * np.sin(r), txt,
+                        ha="center", va="center", color="#888888", fontsize=6.5)
 
         _draw(axes[0], btc_sentiment,   "BTC")
         _draw(axes[1], stock_sentiment, "미국주식")
@@ -1823,6 +1831,27 @@ with st.sidebar:
         _gauge_buf = _render_dual_gauge(_btc_sent, _stk_sent)
         if _gauge_buf:
             st.image(_gauge_buf, use_container_width=True)
+        # 텍스트 표시
+        _clr_map = {
+            "극단적공포": "#c0392b", "공포": "#e67e22", "중립": "#95a5a6",
+            "탐욕": "#2ecc71",       "극단적탐욕": "#16a085",
+        }
+        _disp_map2 = {"극단적공포": "극단적 공포", "공포": "공포", "중립": "중립",
+                      "탐욕": "탐욕", "극단적탐욕": "극단적 탐욕"}
+        def _badge_html(label, sentiment):
+            if not sentiment:
+                return f"<div style='text-align:center;font-size:.75rem;color:#888'>{label}<br>—</div>"
+            c = _clr_map.get(sentiment, "#888")
+            t = _disp_map2.get(sentiment, sentiment)
+            return (f"<div style='text-align:center'>"
+                    f"<span style='font-size:.7rem;color:#aaa'>{label}</span><br>"
+                    f"<span style='background:{c};color:#fff;padding:2px 8px;"
+                    f"border-radius:10px;font-size:.78rem;font-weight:700'>{t}</span></div>")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown(_badge_html("BTC", _btc_sent), unsafe_allow_html=True)
+        with col2:
+            st.markdown(_badge_html("미국주식", _stk_sent), unsafe_allow_html=True)
         st.markdown('<div class="cq-divider"></div>', unsafe_allow_html=True)
 
     run_btn = st.button(f"🚀 {run_label}", type="primary", use_container_width=True)
