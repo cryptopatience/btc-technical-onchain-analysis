@@ -752,13 +752,6 @@ def summarize_combined_openai(deep_dives: dict, api_key: str) -> str:
 
 
 _SENTIMENT_LABELS = ["극단적공포", "공포", "중립", "탐욕", "극단적탐욕"]
-_SENTIMENT_DISPLAY = {
-    "극단적공포": ("😨 극단적 공포", "#c0392b"),
-    "공포":       ("😰 공포",       "#e74c3c"),
-    "중립":       ("😐 중립",       "#7f8c8d"),
-    "탐욕":       ("😏 탐욕",       "#27ae60"),
-    "극단적탐욕": ("🤑 극단적 탐욕", "#16a085"),
-}
 
 def _parse_sentiment(text: str) -> tuple[str, str]:
     """종합분석 텍스트에서 BTC·미국주식 투자심리를 추출한다."""
@@ -771,6 +764,99 @@ def _parse_sentiment(text: str) -> tuple[str, str]:
         stock = stock if stock in _SENTIMENT_LABELS else "중립"
         return btc, stock
     return "", ""
+
+
+def _render_dual_gauge(btc_sentiment: str, stock_sentiment: str):
+    """BTC·미국주식 공포탐욕 게이지를 matplotlib로 렌더링해 BytesIO 반환."""
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        import numpy as np
+        from matplotlib.patches import Wedge
+        from io import BytesIO
+
+        try:
+            plt.rcParams["font.family"] = "Malgun Gothic"
+        except Exception:
+            pass
+
+        _val_map = {"극단적공포": 10, "공포": 30, "중립": 50, "탐욕": 70, "극단적탐욕": 90}
+        _disp_map = {"극단적공포": "극단적 공포", "공포": "공포", "중립": "중립",
+                     "탐욕": "탐욕", "극단적탐욕": "극단적 탐욕"}
+        _sections = [
+            (180, 144, "#c0392b"),  # 극단적공포
+            (144, 108, "#e67e22"),  # 공포
+            (108,  72, "#95a5a6"),  # 중립
+            ( 72,  36, "#2ecc71"),  # 탐욕
+            ( 36,   0, "#16a085"),  # 극단적탐욕
+        ]
+
+        fig, axes = plt.subplots(1, 2, figsize=(5.2, 2.5))
+        fig.patch.set_facecolor("#0E1117")
+
+        def _draw(ax, sentiment, title):
+            value = _val_map.get(sentiment, 50) if sentiment else 50
+            ax.set_facecolor("#0E1117")
+            ax.set_xlim(-1.35, 1.35)
+            ax.set_ylim(-0.55, 1.15)
+            ax.set_aspect("equal")
+            ax.axis("off")
+
+            for t1, t2, color in _sections:
+                ax.add_patch(Wedge((0, 0), 1.0, t2, t1, width=0.40,
+                                   facecolor=color, edgecolor="#0E1117", linewidth=2))
+
+            # 섹션 경계 구분선
+            for deg in (0, 36, 72, 108, 144, 180):
+                r = np.radians(deg)
+                ax.plot([0.60 * np.cos(r), 1.01 * np.cos(r)],
+                        [0.60 * np.sin(r), 1.01 * np.sin(r)],
+                        color="#0E1117", lw=2, zorder=5)
+
+            # 바늘
+            angle = np.radians(180 - value * 1.8)
+            nx, ny = 0.70 * np.cos(angle), 0.70 * np.sin(angle)
+            ax.annotate("", xy=(nx, ny), xytext=(0, 0),
+                        arrowprops=dict(arrowstyle="-|>", color="white",
+                                        lw=1.8, mutation_scale=10))
+            ax.add_patch(plt.Circle((0, 0), 0.055, color="white", zorder=12))
+
+            # 점수
+            if sentiment:
+                ax.text(0, 0.22, str(value), ha="center", va="center",
+                        color="white", fontsize=14, fontweight="bold")
+                ax.text(0, -0.14, _disp_map.get(sentiment, "—"),
+                        ha="center", va="top", color="white",
+                        fontsize=8.5, fontweight="bold")
+            else:
+                ax.text(0, 0.22, "—", ha="center", va="center",
+                        color="#888888", fontsize=12)
+
+            # 제목
+            ax.text(0, 1.08, title, ha="center", va="center",
+                    color="#cccccc", fontsize=9, fontweight="bold")
+
+            # 하단 라벨 (0 / 50 / 100)
+            for val, txt in ((0, "0"), (50, "50"), (100, "100")):
+                r = np.radians(180 - val * 1.8)
+                lx = 1.18 * np.cos(r)
+                ly = 1.18 * np.sin(r)
+                ax.text(lx, ly, txt, ha="center", va="center",
+                        color="#888888", fontsize=6.5)
+
+        _draw(axes[0], btc_sentiment,   "BTC")
+        _draw(axes[1], stock_sentiment, "미국주식")
+
+        plt.tight_layout(pad=0.2)
+        buf = BytesIO()
+        plt.savefig(buf, format="png", dpi=140, bbox_inches="tight",
+                    facecolor="#0E1117", edgecolor="none")
+        plt.close(fig)
+        buf.seek(0)
+        return buf
+    except Exception:
+        return None
 
 
 # ══════════════════════════════════════════════════
@@ -1729,24 +1815,14 @@ with st.sidebar:
 
     st.markdown('<div class="cq-divider"></div>', unsafe_allow_html=True)
 
-    # ── 투자심리 표시
-    _btc_sent  = st.session_state.get("btc_sentiment", "")
-    _stk_sent  = st.session_state.get("stock_sentiment", "")
+    # ── 투자심리 게이지
+    _btc_sent = st.session_state.get("btc_sentiment", "")
+    _stk_sent = st.session_state.get("stock_sentiment", "")
     if _btc_sent or _stk_sent:
         st.markdown("**📡 현재 투자심리**")
-        def _sent_badge(label: str, sentiment: str) -> str:
-            if not sentiment:
-                return f"<div style='margin:3px 0'><b>{label}</b>: —</div>"
-            disp, color = _SENTIMENT_DISPLAY.get(sentiment, (sentiment, "#7f8c8d"))
-            return (
-                f"<div style='margin:3px 0'><b>{label}</b>: "
-                f"<span style='background:{color};color:#fff;padding:1px 8px;"
-                f"border-radius:10px;font-size:0.82rem'>{disp}</span></div>"
-            )
-        st.markdown(
-            _sent_badge("BTC", _btc_sent) + _sent_badge("미국주식", _stk_sent),
-            unsafe_allow_html=True,
-        )
+        _gauge_buf = _render_dual_gauge(_btc_sent, _stk_sent)
+        if _gauge_buf:
+            st.image(_gauge_buf, use_container_width=True)
         st.markdown('<div class="cq-divider"></div>', unsafe_allow_html=True)
 
     run_btn = st.button(f"🚀 {run_label}", type="primary", use_container_width=True)
