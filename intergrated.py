@@ -1606,6 +1606,11 @@ def init_session():
 
 init_session()
 load_cache()
+# 캐시에서 복원된 종합분석 텍스트가 있으면 심리를 재파싱
+if not st.session_state.get("btc_sentiment") and st.session_state.get("combined_summary_deep"):
+    _r_btc, _r_stock = _parse_sentiment(st.session_state["combined_summary_deep"])
+    st.session_state["btc_sentiment"]   = _r_btc
+    st.session_state["stock_sentiment"] = _r_stock
 
 
 # ══════════════════════════════════════════════════
@@ -1929,6 +1934,9 @@ if run_btn:
                         st.write("⚠️ AI API 키가 없습니다.")
                 st.session_state["combined_summary_deep"] = _combined_result
                 st.session_state["combined_provider"]     = _used_prov
+                _btc_s2, _stock_s2 = _parse_sentiment(_combined_result)
+                st.session_state["btc_sentiment"]   = _btc_s2
+                st.session_state["stock_sentiment"] = _stock_s2
                 _cstatus.update(label="✅ 종합분석 완료!", state="complete")
                 save_cache()
         st.rerun()
