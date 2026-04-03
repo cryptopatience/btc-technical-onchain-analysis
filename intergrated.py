@@ -576,7 +576,10 @@ PROMPT_OC_DEEP     = """다음은 {date} (KST) 기준 비트코인 온체인 분
 PROMPT_M7_QUICK    = """다음은 {date} (KST) 기준 Magnificent 7 관련 기사들입니다.\n{content}\n위 내용만을 바탕으로 한국어 Quick Summary를 작성해주세요.\n1. **M7 전체 시장 분위기**\n2. **종목별 핵심 이슈** (티커 명시)\n3. **기술적 주목 레벨**\n4. **단기 투자 시사점**\n5. **한줄 M7 요약**"""
 PROMPT_M7_DEEP     = """다음은 {date} (KST) 기준 Magnificent 7 관련 기사들입니다.\n{content}\n위 내용만을 바탕으로 한국어 Deep Dive 분석을 작성해주세요.\n1. **기술적 분석 종목별 현황**\n2. **펀더멘털 분석**\n3. **애널리스트 의견 종합**\n4. **섹터 및 매크로 연관성**\n5. **종목별 리스크 및 기회 요인**"""
 
-DISCORD_WEBHOOK_URL = (get_secret("DISCORD_WEBHOOK_URL") or "").strip()
+def _get_discord_webhook() -> str:
+    return (get_secret("DISCORD_WEBHOOK_URL") or "").strip()
+
+DISCORD_WEBHOOK_URL = _get_discord_webhook()
 
 PROMPT_COMBINED = """다음은 {date} (KST) 기준 각 시장별 AI Deep Dive 분석 결과입니다.
 
@@ -778,7 +781,7 @@ def _now_kst_dynamic() -> datetime.datetime:
 
 
 def _auto_send_combined_to_discord(combined_text: str, trigger_source: str = "manual") -> str:
-    webhook_url = (DISCORD_WEBHOOK_URL or "").strip()
+    webhook_url = _get_discord_webhook()
     if not webhook_url:
         st.warning("DISCORD_WEBHOOK_URL이 설정되지 않아 Discord 자동 발송을 건너뜁니다.")
         return "success_skipped_missing_webhook"
@@ -2079,7 +2082,7 @@ if is_combined:
         '<span style="background:#F3F4F6;color:#6B7280;border:1px solid #E5E7EB;padding:3px 10px;border-radius:6px;font-size:.8rem;font-weight:700">— 실행 상태 없음</span>'
     )
 
-    if not DISCORD_WEBHOOK_URL:
+    if not _get_discord_webhook():
         st.warning("DISCORD_WEBHOOK_URL이 설정되지 않아 자동 Discord 발송이 비활성화되어 있습니다.")
     st.markdown(f"""
     <div style="background:#FFFFFF;border:1px solid #E5E7EB;border-radius:10px;padding:12px 18px;margin-bottom:16px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
