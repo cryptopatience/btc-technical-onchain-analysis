@@ -515,65 +515,70 @@ def find_time_in_parents(element) -> str:
 
 # ── 뉴스 행 렌더링 (CryptoQuant 테이블 스타일) ──────
 def render_news_row(item: dict, idx: int = 0) -> str:  # noqa: ARG001
-    """북마크 카드 형태로 기사 한 건 렌더링."""
-    import html as _html
-    title   = _html.escape(item.get("title", "") or "(제목 없음)")
-    url     = item.get("url", "")
-    source  = item.get("source", "")
-    pub     = item.get("published_at", "")
-    desc    = _html.escape((item.get("description", "") or "").strip())
-    color   = src_color(source)
-    kst     = utc_to_kst(pub)
-    ticker  = item.get("ticker", "")
+    """Notion 스타일 링크 프리뷰 카드로 기사 한 건 렌더링."""
+    import html as _html, re as _re
+    title  = _html.escape(item.get("title", "") or "(제목 없음)")
+    url    = item.get("url", "")
+    source = item.get("source", "")
+    pub    = item.get("published_at", "")
+    desc   = _html.escape((item.get("description", "") or "").strip())
+    kst    = utc_to_kst(pub)
+    ticker = item.get("ticker", "")
 
-    # 소스 아이콘 (최대 2글자 약어)
-    src_abbr = (_html.escape(source[:2]).upper()) if source else "—"
+    # 도메인 & 파비콘
+    domain = ""
+    if url:
+        m = _re.search(r"https?://([^/]+)", url)
+        if m:
+            domain = m.group(1).lstrip("www.")
+    favicon_html = (
+        f'<img src="https://www.google.com/s2/favicons?domain={domain}&sz=16" '
+        f'width="14" height="14" '
+        f'style="vertical-align:middle;border-radius:2px;margin-right:4px" '
+        f'onerror="this.style.display=\'none\'">'
+    ) if domain else ""
 
-    # 추가 뱃지 (ticker, TA, 온체인)
-    meta_parts = [f'<span style="color:{color};font-weight:600">{_html.escape(source)}</span>']
+    # 하단 메타 줄
+    meta_parts = [f'{favicon_html}<span style="color:#6b7280">{_html.escape(domain or source)}</span>']
     if ticker and ticker in M7_STOCKS:
         tc = M7_STOCKS[ticker]["color"]
         em = M7_STOCKS[ticker]["emoji"]
         meta_parts.append(f'<span style="color:{tc}">{em} {ticker}</span>')
-    if item.get("is_ta"):      meta_parts.append('<span style="color:#5dade2">📊TA</span>')
-    if item.get("is_onchain"): meta_parts.append('<span style="color:#a569bd">🔗온체인</span>')
-    if kst: meta_parts.append(f'<span style="color:#888">{kst}</span>')
+    if item.get("is_ta"):      meta_parts.append('<span style="color:#5dade2">📊 TA</span>')
+    if item.get("is_onchain"): meta_parts.append('<span style="color:#a569bd">🔗 온체인</span>')
+    if kst: meta_parts.append(f'<span style="color:#4b5563">{kst}</span>')
     meta_html = ' · '.join(meta_parts)
 
-    # 설명 (제목과 다를 때만, 120자 제한)
+    # 설명 (제목과 다를 때, 2줄 clamp)
     desc_html = ""
     if desc and desc.lower()[:60] != title.lower()[:60]:
-        desc_html = (f'<div style="font-size:.76rem;color:#9ca3af;margin-top:3px;'
-                     f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'
-                     f'{desc[:120]}</div>')
+        desc_html = (
+            f'<div style="font-size:.76rem;color:#94a3b8;margin-top:4px;'
+            f'overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;'
+            f'-webkit-box-orient:vertical;line-height:1.45">'
+            f'{desc[:220]}</div>'
+        )
 
-    # 클릭 영역 전체를 링크로 감싸기
-    inner = f"""
-      <div style="display:flex;align-items:center;gap:11px;
-                  padding:9px 13px;margin:3px 0;
-                  background:#161b2e;border-radius:9px;
-                  border-left:3px solid {color};
-                  transition:background .15s;cursor:pointer"
-           onmouseover="this.style.background='#1e2540'"
-           onmouseout="this.style.background='#161b2e'">
-        <div style="min-width:34px;height:34px;background:{color}22;border-radius:6px;
-                    display:flex;align-items:center;justify-content:center;
-                    font-size:.65rem;font-weight:800;color:{color};flex-shrink:0">
-          {src_abbr}
-        </div>
-        <div style="flex:1;min-width:0;overflow:hidden">
-          <div style="font-size:.87rem;font-weight:600;color:#dde1f0;
-                      white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
-            {title}
-          </div>
-          {desc_html}
-          <div style="font-size:.72rem;margin-top:4px">{meta_html}</div>
-        </div>
-        <div style="color:#4b5563;font-size:1.1rem;flex-shrink:0">›</div>
-      </div>"""
+    inner = f"""<div style="border:1px solid #2a2f45;border-radius:8px;
+                     background:#111827;margin:4px 0;cursor:pointer;
+                     transition:border-color .15s,background .15s"
+                onmouseover="this.style.borderColor='#4f5a78';this.style.background='#161d30'"
+                onmouseout="this.style.borderColor='#2a2f45';this.style.background='#111827'">
+  <div style="padding:11px 15px">
+    <div style="font-size:.88rem;font-weight:700;color:#e2e8f0;
+                overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;
+                -webkit-box-orient:vertical;line-height:1.45">
+      {title}
+    </div>
+    {desc_html}
+    <div style="font-size:.72rem;margin-top:7px;display:flex;align-items:center;gap:0;flex-wrap:wrap;gap:4px">
+      {meta_html}
+    </div>
+  </div>
+</div>"""
 
     if url:
-        return f'<a href="{url}" target="_blank" rel="noopener noreferrer" style="text-decoration:none">{inner}</a>'
+        return f'<a href="{url}" target="_blank" rel="noopener noreferrer" style="text-decoration:none;display:block">{inner}</a>'
     return inner
 
 
