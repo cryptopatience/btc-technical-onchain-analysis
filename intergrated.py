@@ -786,110 +786,112 @@ def _parse_sentiment(text: str) -> tuple[str, str]:
     return "", ""
 
 
-def _render_dual_gauge(btc_sentiment: str, stock_sentiment: str):
-    """BTC·미국주식 공포탐욕 게이지를 matplotlib로 렌더링해 BytesIO 반환."""
-    try:
-        import matplotlib
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-        import matplotlib.font_manager as fm
-        import numpy as np
-        from matplotlib.patches import Wedge
-        from io import BytesIO
+def _render_dual_gauge(btc_sentiment: str, stock_sentiment: str) -> str:
+    """BTC·미국주식 공포탐욕 게이지를 SVG 문자열로 반환 (브라우저 렌더링 → 한국어 완벽 지원)."""
+    import math
 
-        # 한국어 폰트를 rcParams에 등록 (fontproperties+rotation 충돌 방지)
-        for _fp in ["C:/Windows/Fonts/malgunbd.ttf", "C:/Windows/Fonts/malgun.ttf",
-                    "C:/Windows/Fonts/NanumGothicBold.ttf", "C:/Windows/Fonts/NanumGothic.ttf"]:
-            if os.path.exists(_fp):
-                fm.fontManager.addfont(_fp)
-                _font_name = fm.FontProperties(fname=_fp).get_name()
-                matplotlib.rcParams["font.family"] = _font_name
-                matplotlib.rcParams["axes.unicode_minus"] = False
-                break
+    _val_map  = {"극단적공포": 10, "공포": 30, "중립": 50, "탐욕": 70, "극단적탐욕": 90}
+    _disp_map = {"극단적공포": "극단적 공포", "공포": "공포", "중립": "중립",
+                 "탐욕": "탐욕", "극단적탐욕": "극단적 탐욕"}
+    _sections = [
+        (180, 144, "#c0392b", 162, ["극단적", "공포"]),
+        (144, 108, "#e67e22", 126, ["공포"]),
+        (108,  72, "#95a5a6",  90, ["중립"]),
+        ( 72,  36, "#2ecc71",  54, ["탐욕"]),
+        ( 36,   0, "#16a085",  18, ["극단적", "탐욕"]),
+    ]
+    RO, RI = 110, 64   # outer / inner radius
 
-        _val_map = {"극단적공포": 10, "공포": 30, "중립": 50, "탐욕": 70, "극단적탐욕": 90}
-        _disp_map = {"극단적공포": "극단적 공포", "공포": "공포", "중립": "중립",
-                     "탐욕": "탐욕", "극단적탐욕": "극단적 탐욕"}
-        # (theta_start, theta_end, color, mid_deg, 라벨)
-        _sections = [
-            (180, 144, "#c0392b", 162, "극단적\n공포"),
-            (144, 108, "#e67e22", 126, "공포"),
-            (108,  72, "#95a5a6",  90, "중립"),
-            ( 72,  36, "#2ecc71",  54, "탐욕"),
-            ( 36,   0, "#16a085",  18, "극단적\n탐욕"),
-        ]
+    def pt(cx, cy, r, deg):
+        rad = math.radians(deg)
+        return cx + r * math.cos(rad), cy - r * math.sin(rad)
 
-        fig, axes = plt.subplots(1, 2, figsize=(6.0, 3.0))
-        fig.patch.set_facecolor("#0E1117")
+    def sector_path(cx, cy, t1, t2):
+        x1o, y1o = pt(cx, cy, RO, t1);  x2o, y2o = pt(cx, cy, RO, t2)
+        x1i, y1i = pt(cx, cy, RI, t1);  x2i, y2i = pt(cx, cy, RI, t2)
+        lg = 1 if (t1 - t2) > 180 else 0
+        return (f"M {x1o:.1f},{y1o:.1f} A {RO},{RO} 0 {lg},0 {x2o:.1f},{y2o:.1f} "
+                f"L {x2i:.1f},{y2i:.1f} A {RI},{RI} 0 {lg},1 {x1i:.1f},{y1i:.1f} Z")
 
-        def _draw(ax, sentiment, title):
-            value = _val_map.get(sentiment, 50) if sentiment else 50
-            ax.set_facecolor("#0E1117")
-            ax.set_xlim(-1.5, 1.5)
-            ax.set_ylim(-0.65, 1.30)
-            ax.set_aspect("equal")
-            ax.axis("off")
+    def one_gauge(cx, cy, sentiment, title):
+        value = _val_map.get(sentiment, 50) if sentiment else 50
+        parts = []
 
-            # 호 섹션 + 내부 라벨
-            for t1, t2, color, mid_deg, label in _sections:
-                ax.add_patch(Wedge((0, 0), 1.0, t2, t1, width=0.46,
-                                   facecolor=color, edgecolor="#0E1117", linewidth=2))
-                r = np.radians(mid_deg)
-                lx, ly = 0.77 * np.cos(r), 0.77 * np.sin(r)
-                rotation = mid_deg - 90
-                ax.text(lx, ly, label,
-                        ha="center", va="center", color="white",
-                        fontsize=6.5, fontweight="bold",
-                        rotation=rotation, rotation_mode="anchor",
-                        linespacing=1.15, zorder=10)
+        # 섹션 호
+        for t1, t2, color, mid, lines in _sections:
+            d = sector_path(cx, cy, t1, t2)
+            parts.append(f'<path d="{d}" fill="{color}"/>')
+            # 구분선
+            for bdeg in (t1, t2):
+                xi, yi = pt(cx, cy, RI,      bdeg)
+                xo, yo = pt(cx, cy, RO + 1,  bdeg)
+                parts.append(f'<line x1="{xi:.1f}" y1="{yi:.1f}" x2="{xo:.1f}" y2="{yo:.1f}" '
+                              f'stroke="#0E1117" stroke-width="2.5"/>')
+            # 라벨 (호 중앙)
+            rm = (RO + RI) / 2
+            lx, ly = pt(cx, cy, rm, mid)
+            rot = mid - 90
+            if len(lines) == 1:
+                parts.append(f'<text x="{lx:.1f}" y="{ly:.1f}" fill="white" '
+                              f'font-size="11" font-weight="bold" text-anchor="middle" '
+                              f'dominant-baseline="middle" '
+                              f'transform="rotate({rot},{lx:.1f},{ly:.1f})">{lines[0]}</text>')
+            else:
+                dy = 7
+                for i, ln in enumerate(lines):
+                    offset = (i - (len(lines) - 1) / 2) * dy * 2
+                    bx = lx + offset * math.cos(math.radians(rot + 90))
+                    by = ly + offset * math.sin(math.radians(rot + 90))
+                    parts.append(f'<text x="{bx:.1f}" y="{by:.1f}" fill="white" '
+                                  f'font-size="10" font-weight="bold" text-anchor="middle" '
+                                  f'dominant-baseline="middle" '
+                                  f'transform="rotate({rot},{bx:.1f},{by:.1f})">{ln}</text>')
 
-            # 섹션 경계선
-            for deg in (0, 36, 72, 108, 144, 180):
-                r = np.radians(deg)
-                ax.plot([0.54 * np.cos(r), 1.01 * np.cos(r)],
-                        [0.54 * np.sin(r), 1.01 * np.sin(r)],
-                        color="#0E1117", lw=2.5, zorder=5)
+        # 바늘
+        needle_deg = 180 - value * 1.8
+        nx, ny = pt(cx, cy, RI - 8, needle_deg)
+        parts.append(f'<line x1="{cx}" y1="{cy}" x2="{nx:.1f}" y2="{ny:.1f}" '
+                     f'stroke="white" stroke-width="3" stroke-linecap="round" '
+                     f'marker-end="url(#arrowW)"/>')
+        parts.append(f'<circle cx="{cx}" cy="{cy}" r="6" fill="white"/>')
 
-            # 바늘
-            angle = np.radians(180 - value * 1.8)
-            nx, ny = 0.65 * np.cos(angle), 0.65 * np.sin(angle)
-            ax.annotate("", xy=(nx, ny), xytext=(0, 0),
-                        arrowprops=dict(arrowstyle="-|>", color="white",
-                                        lw=2.0, mutation_scale=12))
-            ax.add_patch(plt.Circle((0, 0), 0.06, color="white", zorder=12))
+        # 점수
+        parts.append(f'<text x="{cx}" y="{cy - 14}" fill="white" font-size="22" '
+                     f'font-weight="bold" text-anchor="middle" dominant-baseline="middle">'
+                     f'{value}</text>')
 
-            # 점수
-            ax.text(0, 0.27, str(value), ha="center", va="center",
-                    color="white", fontsize=15, fontweight="bold")
+        # 심리 텍스트
+        sent_lbl = _disp_map.get(sentiment, "—") if sentiment else "—"
+        parts.append(f'<text x="{cx}" y="{cy + 28}" fill="white" font-size="13" '
+                     f'font-weight="bold" text-anchor="middle">{sent_lbl}</text>')
 
-            # 현재 심리 텍스트 (하단)
-            if sentiment:
-                ax.text(0, -0.17, _disp_map.get(sentiment, "—"),
-                        ha="center", va="top", color="white",
-                        fontsize=9, fontweight="bold")
+        # 제목
+        parts.append(f'<text x="{cx}" y="{cy - RO - 14}" fill="#cccccc" font-size="15" '
+                     f'font-weight="bold" text-anchor="middle">{title}</text>')
 
-            # 제목
-            ax.text(0, 1.22, title, ha="center", va="center",
-                    color="#cccccc", fontsize=10, fontweight="bold")
+        # 눈금
+        for val, lbl, anchor in ((0, "0", "middle"), (50, "50", "middle"), (100, "100", "middle")):
+            gx, gy = pt(cx, cy, RO + 16, 180 - val * 1.8)
+            parts.append(f'<text x="{gx:.1f}" y="{gy + 4:.1f}" fill="#666" '
+                         f'font-size="10" text-anchor="{anchor}">{lbl}</text>')
 
-            # 눈금 (0 / 50 / 100)
-            for val, txt in ((0, "0"), (50, "50"), (100, "100")):
-                r = np.radians(180 - val * 1.8)
-                ax.text(1.22 * np.cos(r), 1.22 * np.sin(r), txt,
-                        ha="center", va="center", color="#888888", fontsize=7)
+        return "\n".join(parts)
 
-        _draw(axes[0], btc_sentiment,   "BTC")
-        _draw(axes[1], stock_sentiment, "미국주식")
+    W, H = 580, 210
+    g1 = one_gauge(145, 165, btc_sentiment,   "BTC")
+    g2 = one_gauge(435, 165, stock_sentiment, "미국주식")
 
-        plt.tight_layout(pad=0.2)
-        buf = BytesIO()
-        plt.savefig(buf, format="png", dpi=150, bbox_inches="tight",
-                    facecolor="#0E1117", edgecolor="none")
-        plt.close(fig)
-        buf.seek(0)
-        return buf
-    except Exception:
-        return None
+    return f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}"
+     style="width:100%;background:#0E1117;border-radius:10px;display:block">
+  <defs>
+    <marker id="arrowW" markerWidth="8" markerHeight="6"
+            refX="8" refY="3" orient="auto">
+      <polygon points="0 0,8 3,0 6" fill="white"/>
+    </marker>
+  </defs>
+  {g1}
+  {g2}
+</svg>"""
 
 
 # ══════════════════════════════════════════════════
@@ -1853,9 +1855,7 @@ with st.sidebar:
     _stk_sent = st.session_state.get("stock_sentiment", "")
     if _btc_sent or _stk_sent:
         st.markdown("**📡 현재 투자심리**")
-        _gauge_buf = _render_dual_gauge(_btc_sent, _stk_sent)
-        if _gauge_buf:
-            st.image(_gauge_buf, use_container_width=True)
+        st.markdown(_render_dual_gauge(_btc_sent, _stk_sent), unsafe_allow_html=True)
         # 텍스트 표시
         _clr_map = {
             "극단적공포": "#c0392b", "공포": "#e67e22", "중립": "#95a5a6",
