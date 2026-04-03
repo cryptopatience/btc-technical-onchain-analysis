@@ -772,19 +772,36 @@ def _render_dual_gauge(btc_sentiment: str, stock_sentiment: str):
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
+        import matplotlib.font_manager as fm
         import numpy as np
         from matplotlib.patches import Wedge
         from io import BytesIO
 
-        try:
-            plt.rcParams["font.family"] = "Malgun Gothic"
-        except Exception:
-            pass
+        # 한국어 폰트 직접 로드
+        _ko_prop = None
+        for _fp in ["C:/Windows/Fonts/malgunbd.ttf", "C:/Windows/Fonts/malgun.ttf",
+                    "C:/Windows/Fonts/NanumGothicBold.ttf", "C:/Windows/Fonts/NanumGothic.ttf"]:
+            try:
+                import os
+                if os.path.exists(_fp):
+                    fm.fontManager.addfont(_fp)
+                    _ko_prop = fm.FontProperties(fname=_fp)
+                    break
+            except Exception:
+                continue
+        if _ko_prop is None:
+            plt.rcParams["font.family"] = "sans-serif"
+
+        def _txt(ax, x, y, s, **kw):
+            """폰트 속성을 자동 적용하는 text 헬퍼."""
+            if _ko_prop:
+                kw.setdefault("fontproperties", _ko_prop)
+            return ax.text(x, y, s, **kw)
 
         _val_map = {"극단적공포": 10, "공포": 30, "중립": 50, "탐욕": 70, "극단적탐욕": 90}
         _disp_map = {"극단적공포": "극단적 공포", "공포": "공포", "중립": "중립",
                      "탐욕": "탐욕", "극단적탐욕": "극단적 탐욕"}
-        # (t1, t2, color, 중간각도, 짧은라벨)
+        # (theta_start, theta_end, color, mid_deg, 라벨)
         _sections = [
             (180, 144, "#c0392b", 162, "극단적\n공포"),
             (144, 108, "#e67e22", 126, "공포"),
@@ -793,72 +810,71 @@ def _render_dual_gauge(btc_sentiment: str, stock_sentiment: str):
             ( 36,   0, "#16a085",  18, "극단적\n탐욕"),
         ]
 
-        fig, axes = plt.subplots(1, 2, figsize=(5.6, 2.8))
+        fig, axes = plt.subplots(1, 2, figsize=(6.0, 3.0))
         fig.patch.set_facecolor("#0E1117")
 
         def _draw(ax, sentiment, title):
             value = _val_map.get(sentiment, 50) if sentiment else 50
             ax.set_facecolor("#0E1117")
-            ax.set_xlim(-1.45, 1.45)
-            ax.set_ylim(-0.60, 1.25)
+            ax.set_xlim(-1.5, 1.5)
+            ax.set_ylim(-0.65, 1.30)
             ax.set_aspect("equal")
             ax.axis("off")
 
+            # 호 섹션 + 내부 라벨
             for t1, t2, color, mid_deg, label in _sections:
-                ax.add_patch(Wedge((0, 0), 1.0, t2, t1, width=0.42,
+                ax.add_patch(Wedge((0, 0), 1.0, t2, t1, width=0.46,
                                    facecolor=color, edgecolor="#0E1117", linewidth=2))
-
-                # 섹션 라벨 (호 중앙, 반지름 0.79 위치)
                 r = np.radians(mid_deg)
-                lx, ly = 0.79 * np.cos(r), 0.79 * np.sin(r)
-                rotation = mid_deg - 90  # 호의 접선 방향
-                ax.text(lx, ly, label, ha="center", va="center",
-                        color="white", fontsize=5.2, fontweight="bold",
-                        rotation=rotation, rotation_mode="anchor",
-                        linespacing=1.1)
+                lx, ly = 0.77 * np.cos(r), 0.77 * np.sin(r)
+                rotation = mid_deg - 90
+                _txt(ax, lx, ly, label,
+                     ha="center", va="center", color="white",
+                     fontsize=6.5, fontweight="bold",
+                     rotation=rotation, rotation_mode="anchor",
+                     linespacing=1.15, zorder=10)
 
-            # 섹션 경계 구분선
+            # 섹션 경계선
             for deg in (0, 36, 72, 108, 144, 180):
                 r = np.radians(deg)
-                ax.plot([0.58 * np.cos(r), 1.01 * np.cos(r)],
-                        [0.58 * np.sin(r), 1.01 * np.sin(r)],
-                        color="#0E1117", lw=2, zorder=5)
+                ax.plot([0.54 * np.cos(r), 1.01 * np.cos(r)],
+                        [0.54 * np.sin(r), 1.01 * np.sin(r)],
+                        color="#0E1117", lw=2.5, zorder=5)
 
             # 바늘
             angle = np.radians(180 - value * 1.8)
-            nx, ny = 0.68 * np.cos(angle), 0.68 * np.sin(angle)
+            nx, ny = 0.65 * np.cos(angle), 0.65 * np.sin(angle)
             ax.annotate("", xy=(nx, ny), xytext=(0, 0),
                         arrowprops=dict(arrowstyle="-|>", color="white",
-                                        lw=1.8, mutation_scale=10))
-            ax.add_patch(plt.Circle((0, 0), 0.055, color="white", zorder=12))
+                                        lw=2.0, mutation_scale=12))
+            ax.add_patch(plt.Circle((0, 0), 0.06, color="white", zorder=12))
 
-            # 점수 + 심리 텍스트
+            # 점수
+            ax.text(0, 0.27, str(value), ha="center", va="center",
+                    color="white", fontsize=15, fontweight="bold")
+
+            # 현재 심리 텍스트 (하단)
             if sentiment:
-                ax.text(0, 0.25, str(value), ha="center", va="center",
-                        color="white", fontsize=14, fontweight="bold")
-                ax.text(0, -0.15, _disp_map.get(sentiment, "—"),
-                        ha="center", va="top", color="white",
-                        fontsize=8.5, fontweight="bold")
-            else:
-                ax.text(0, 0.25, "—", ha="center", va="center",
-                        color="#888888", fontsize=12)
+                _txt(ax, 0, -0.17, _disp_map.get(sentiment, "—"),
+                     ha="center", va="top", color="white",
+                     fontsize=9, fontweight="bold")
 
             # 제목
-            ax.text(0, 1.17, title, ha="center", va="center",
-                    color="#cccccc", fontsize=9, fontweight="bold")
+            _txt(ax, 0, 1.22, title, ha="center", va="center",
+                 color="#cccccc", fontsize=10, fontweight="bold")
 
-            # 하단 눈금 (0 / 50 / 100)
+            # 눈금 (0 / 50 / 100)
             for val, txt in ((0, "0"), (50, "50"), (100, "100")):
                 r = np.radians(180 - val * 1.8)
                 ax.text(1.22 * np.cos(r), 1.22 * np.sin(r), txt,
-                        ha="center", va="center", color="#888888", fontsize=6.5)
+                        ha="center", va="center", color="#888888", fontsize=7)
 
         _draw(axes[0], btc_sentiment,   "BTC")
         _draw(axes[1], stock_sentiment, "미국주식")
 
         plt.tight_layout(pad=0.2)
         buf = BytesIO()
-        plt.savefig(buf, format="png", dpi=140, bbox_inches="tight",
+        plt.savefig(buf, format="png", dpi=150, bbox_inches="tight",
                     facecolor="#0E1117", edgecolor="none")
         plt.close(fig)
         buf.seek(0)
