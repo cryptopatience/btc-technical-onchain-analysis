@@ -2156,21 +2156,25 @@ if auto_run_combined:
     run_combined_analysis_pipeline(use_ai, ai_providers, trigger_source="login")
     st.rerun()
 
-# ── USDT APY 자동 실행 (모드 선택 시 데이터 없으면 즉시 수집)
-if is_usdt_apy and not st.session_state.get("usdt_apy_data"):
-    with st.spinner("💵 USDT APY 데이터 수집 중..."):
-        _auto_data, _auto_pid = fetch_usdt_apy()
-    st.session_state["usdt_apy_data"] = _auto_data
-    if _auto_pid:
-        with st.spinner("📈 Aave V3 히스토리 수집 중..."):
-            _auto_hist = fetch_aave_v3_usdt_history(_auto_pid)
-        st.session_state["usdt_apy_aave_history"] = _auto_hist
-    if use_ai and GEMINI_API_KEY and "Gemini 2.5 Pro" in ai_providers:
-        _hist_list = st.session_state["usdt_apy_aave_history"].get("history", [])
-        with st.spinner("🤖 AI 분석 중..."):
-            st.session_state["usdt_apy_ai_summary"] = summarize_usdt_apy_gemini(
-                _auto_data, _hist_list, GEMINI_API_KEY)
-    st.rerun()
+# ── USDT APY 자동 실행
+if is_usdt_apy:
+    _need_data = not st.session_state.get("usdt_apy_data")
+    _need_ai   = (use_ai and GEMINI_API_KEY and "Gemini 2.5 Pro" in ai_providers
+                  and not st.session_state.get("usdt_apy_ai_summary"))
+    if _need_data or _need_ai:
+        if _need_data:
+            with st.spinner("💵 USDT APY 데이터 수집 중..."):
+                _auto_data, _auto_pid = fetch_usdt_apy()
+            st.session_state["usdt_apy_data"] = _auto_data
+            if _auto_pid:
+                with st.spinner("📈 Aave V3 히스토리 수집 중..."):
+                    st.session_state["usdt_apy_aave_history"] = fetch_aave_v3_usdt_history(_auto_pid)
+        if _need_ai:
+            _hist_list = st.session_state.get("usdt_apy_aave_history", {}).get("history", [])
+            with st.spinner("🤖 AI 분석 중..."):
+                st.session_state["usdt_apy_ai_summary"] = summarize_usdt_apy_gemini(
+                    st.session_state["usdt_apy_data"], _hist_list, GEMINI_API_KEY)
+        st.rerun()
 
 if run_btn:
     all_raw, source_map = [], {}
@@ -2616,13 +2620,6 @@ if is_usdt_apy:
             st.markdown("#### 🤖 AI 분석 리포트")
             _copy_btn(_ai_sum)
             st.markdown(_ai_sum)
-        elif use_ai and GEMINI_API_KEY and "Gemini 2.5 Pro" in ai_providers:
-            if st.button("🤖 AI 분석 실행", key="usdt_ai_btn"):
-                _hist_list = st.session_state.get("usdt_apy_aave_history", {}).get("history", [])
-                with st.spinner("🤖 AI 분석 중..."):
-                    st.session_state["usdt_apy_ai_summary"] = summarize_usdt_apy_gemini(
-                        _ud, _hist_list, GEMINI_API_KEY)
-                st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
     st.stop()
 
