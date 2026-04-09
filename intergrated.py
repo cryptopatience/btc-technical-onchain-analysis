@@ -2517,21 +2517,19 @@ if is_usdt_apy:
                       delta_color="normal")
             m4.metric("1년 전 TVL", _fmt_usd(_tvl_old))
 
-            # 날짜 레이블 (30일 간격으로 샘플링)
-            _step = max(1, len(_hist) // 30)
-            _dates  = [_hist[i]["date"] for i in range(0, len(_hist), _step)]
-            _apys   = [_hist[i]["apy"]  for i in range(0, len(_hist), _step)]
-            _tvls   = [_hist[i]["tvlUsd"] / 1e6 for i in range(0, len(_hist), _step)]  # $M 단위
+            # 날짜 인덱스 DataFrame으로 1년 전체 표시
+            import pandas as pd
+            _idx  = pd.to_datetime([h["date"] for h in _hist])
+            _df_apy = pd.DataFrame({"APY(%)": [h["apy"] for h in _hist]}, index=_idx)
+            _df_tvl = pd.DataFrame({"TVL($M)": [h["tvlUsd"] / 1e6 for h in _hist]}, index=_idx)
 
             ch1, ch2 = st.columns(2)
             with ch1:
-                st.markdown("<div style='font-size:.8rem;color:#6B7280;margin-bottom:4px'>APY (%) — 30일 샘플</div>", unsafe_allow_html=True)
-                st.line_chart({"APY(%)": _apys}, height=200, use_container_width=True)
-                st.caption(f"{_dates[0]} → {_dates[-1]}")
+                st.markdown("<div style='font-size:.8rem;color:#6B7280;margin-bottom:4px'>APY (%) — 1년</div>", unsafe_allow_html=True)
+                st.line_chart(_df_apy, height=220, use_container_width=True)
             with ch2:
-                st.markdown("<div style='font-size:.8rem;color:#6B7280;margin-bottom:4px'>TVL ($M) — 30일 샘플</div>", unsafe_allow_html=True)
-                st.line_chart({"TVL($M)": _tvls}, height=200, use_container_width=True)
-                st.caption(f"{_dates[0]} → {_dates[-1]}")
+                st.markdown("<div style='font-size:.8rem;color:#6B7280;margin-bottom:4px'>TVL ($M) — 1년</div>", unsafe_allow_html=True)
+                st.line_chart(_df_tvl, height=220, use_container_width=True)
 
         st.markdown("<br>", unsafe_allow_html=True)
         st.markdown("#### 💹 USDT 풀 APY 전체 순위")
