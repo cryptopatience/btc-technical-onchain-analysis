@@ -627,7 +627,12 @@ PROMPT_COMBINED = """다음은 {date} (KST) 기준 각 시장별 AI Deep Dive �
    - 비트코인과 주식 시장의 상관관계 분석
    - 자산 배분 관점에서의 시사점
 
-5. **결론: 오늘의 핵심 인사이트 3가지**
+5. **기관 BTC 채택 및 DeFi 수익률 환경**
+   - BTC 기업 보유 현황과 기관 채택 최신 동향
+   - USDT DeFi APY 수준이 시사하는 시장 유동성 및 리스크 선호도
+   - DeFi APY ↔ BTC 가격 상관관계에서 읽히는 신호
+
+6. **결론: 오늘의 핵심 인사이트 3가지**
    - 가장 중요한 관찰 사항 3가지를 bullet point로 명확히 제시
 
 전문적이고 날카로운 금융 분석 리포트 톤으로 작성해주세요.
@@ -738,11 +743,13 @@ def summarize_combined_gemini(deep_dives: dict, api_key: str) -> str:
     except ImportError:
         return ""
     _labels = {
-        "stock_": "📈 미국 주식 시장 분석",
-        "coin_":  "🪙 코인 시장 분석",
-        "ta_":    "📊 BTC 기술적 분석",
-        "oc_":    "🔗 BTC 온체인 분석",
-        "m7_":    "🏆 M7 기술적 분석",
+        "stock_":        "📈 미국 주식 시장 분석",
+        "coin_":         "🪙 코인 시장 분석",
+        "ta_":           "📊 BTC 기술적 분석",
+        "oc_":           "🔗 BTC 온체인 분석",
+        "m7_":           "🏆 M7 기술적 분석",
+        "btc_treasury_": "🏦 BTC Treasury (기업 보유 현황)",
+        "usdt_apy_":     "💵 USDT APY (DeFi 수익률 환경)",
     }
     sections = "\n\n".join(
         f"=== {_labels[p]} ===\n{deep_dives[p][:3000]}"
@@ -765,11 +772,13 @@ def summarize_combined_openai(deep_dives: dict, api_key: str) -> str:
     except ImportError:
         return ""
     _labels = {
-        "stock_": "📈 미국 주식 시장 분석",
-        "coin_":  "🪙 코인 시장 분석",
-        "ta_":    "📊 BTC 기술적 분석",
-        "oc_":    "🔗 BTC 온체인 분석",
-        "m7_":    "🏆 M7 기술적 분석",
+        "stock_":        "📈 미국 주식 시장 분석",
+        "coin_":         "🪙 코인 시장 분석",
+        "ta_":           "📊 BTC 기술적 분석",
+        "oc_":           "🔗 BTC 온체인 분석",
+        "m7_":           "🏆 M7 기술적 분석",
+        "btc_treasury_": "🏦 BTC Treasury (기업 보유 현황)",
+        "usdt_apy_":     "💵 USDT APY (DeFi 수익률 환경)",
     }
     sections = "\n\n".join(
         f"=== {_labels[p]} ===\n{deep_dives[p][:2000]}"
@@ -1056,6 +1065,52 @@ def run_combined_analysis_pipeline(use_ai: bool, ai_providers: list, trigger_sou
                 st.write(f"  - {_cl}: 분석 완료")
             else:
                 st.write(f"  - {_cl}: 분석 결과 없음 (API 키 확인)")
+
+        # ── BTC Treasury 수집 및 분석
+        st.write("→ 🏦 BTC Treasury 수집 중...")
+        _td = fetch_btc_treasuries()
+        st.session_state["btc_treasury_data"] = _td
+        _tnews = []
+        try:
+            _tnews = fetch_btc_treasury_news()
+            st.session_state["btc_treasury_news_data"] = _tnews
+        except Exception:
+            pass
+        if use_ai and "Gemini 2.5 Pro" in ai_providers and GEMINI_API_KEY:
+            if not any(r.get("_error") for r in _td):
+                st.write("  - 🏦 BTC Treasury: AI 분석 중...")
+                _ta = summarize_btc_treasury_gemini(_td, _tnews, GEMINI_API_KEY)
+                st.session_state["btc_treasury_ai_summary"] = _ta
+                if _ta:
+                    _deep_dives["btc_treasury_"] = _ta
+                    st.write("  - 🏦 BTC Treasury: 분석 완료")
+
+        # ── USDT APY 수집 및 분석
+        st.write("→ 💵 USDT APY 수집 중...")
+        _usdt_data, _aave_pid = fetch_usdt_apy()
+        st.session_state["usdt_apy_data"] = _usdt_data
+        _hist = {}
+        if _aave_pid:
+            try:
+                _hist = fetch_aave_v3_usdt_history(_aave_pid)
+                st.session_state["usdt_apy_aave_history"] = _hist
+            except Exception:
+                pass
+        _unews = []
+        try:
+            _unews = fetch_usdt_apy_news()
+            st.session_state["usdt_apy_news_data"] = _unews
+        except Exception:
+            pass
+        if use_ai and "Gemini 2.5 Pro" in ai_providers and GEMINI_API_KEY:
+            if not any(r.get("_error") for r in _usdt_data):
+                st.write("  - 💵 USDT APY: AI 분석 중...")
+                _ua = summarize_usdt_apy_gemini(
+                    _usdt_data, _hist.get("history", []), GEMINI_API_KEY, _unews)
+                st.session_state["usdt_apy_ai_summary"] = _ua
+                if _ua:
+                    _deep_dives["usdt_apy_"] = _ua
+                    st.write("  - 💵 USDT APY: 분석 완료")
 
         if not _deep_dives:
             st.session_state["combined_last_run_status"] = "failed_no_analysis"
@@ -1688,7 +1743,7 @@ def filter_m7_news(news_list, selected_tickers):
 # ── BTC Treasury & USDT APY 수집 ─────────────────
 # ══════════════════════════════════════════════════
 DEFILLAMA_POOLS_URL = "https://yields.llama.fi/pools"
-BTC_TREASURIES_URL  = "https://bitcointreasuries.net/"
+BTC_TREASURIES_URL  = "https://bitbo.io/treasuries/"
 
 _SCRAPE_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -1759,7 +1814,10 @@ document.getElementById('copybtn').addEventListener('click', function() {{
 
 
 def fetch_btc_treasuries() -> list:
-    """bitcointreasuries.net 스크래핑 → list of dicts"""
+    """bitbo.io/treasuries/ 스크래핑 → list of dicts
+    컬럼: Rank | Entity | Country | # of BTC | Value Today | % of 21m
+    페이지에 table이 10개 있으므로 가장 행이 많은 tbody(253행)를 대상으로 파싱.
+    """
     try:
         resp = requests.get(BTC_TREASURIES_URL, headers=_SCRAPE_HEADERS, timeout=15)
         resp.raise_for_status()
@@ -1767,23 +1825,141 @@ def fetch_btc_treasuries() -> list:
         return [{"_error": str(e)}]
 
     soup = BeautifulSoup(resp.text, "html.parser")
-    tables = soup.find_all("table")
-    if not tables:
-        return [{"_error": "JS 렌더링 기반 — 테이블 미검출"}]
 
-    main_table = max(tables, key=lambda t: len(t.find_all("tr")))
-    rows = main_table.find_all("tr")
-    if len(rows) < 2:
-        return [{"_error": "데이터 없음"}]
+    # 가장 많은 행을 가진 tbody = 메인 253행 테이블
+    all_tbodies = soup.find_all("tbody")
+    if not all_tbodies:
+        return [{"_error": "테이블 미검출"}]
+    main_tbody = max(all_tbodies, key=lambda tb: len(tb.find_all("tr")))
 
-    hdrs = [th.get_text(strip=True) for th in rows[0].find_all(["th", "td"])]
+    # 부모 table 에서 thead 헤더 추출
+    parent_table = main_tbody.find_parent("table")
+    thead = parent_table.find("thead") if parent_table else None
+    if thead:
+        hdrs = [th.get_text(strip=True) for th in thead.find_all("th")]
+    else:
+        hdrs = ["Rank", "Entity", "Country", "# of BTC", "Value Today", "% of 21m"]
+
+    def _td_value(td) -> str:
+        # 국기 이미지 → data-tooltip 속성(국가 코드)으로 대체
+        img = td.find("img")
+        if img and img.get("data-tooltip"):
+            return img["data-tooltip"]
+        return td.get_text(strip=True)
+
     result = []
-    for row in rows[1:]:
-        cells = [td.get_text(strip=True) for td in row.find_all(["td", "th"])]
+    for tr in main_tbody.find_all("tr"):
+        cells = [_td_value(td) for td in tr.find_all("td")]
         if len(cells) < 2:
             continue
-        result.append({hdrs[i] if i < len(hdrs) else f"col_{i}": v for i, v in enumerate(cells)})
+        result.append({hdrs[i] if i < len(hdrs) else f"col_{i}": v
+                        for i, v in enumerate(cells)})
     return result if result else [{"_error": "파싱된 행 없음"}]
+
+
+_TREASURY_KEYWORDS = frozenset({
+    "microstrategy", "mstr", "saylor", "strategy",
+    "bitcoin treasury", "btc treasury", "corporate bitcoin",
+    "institutional bitcoin", "bitcoin reserve", "btc reserve",
+    "metaplanet", "semler", "twenty one", "nakamoto",
+    "bitcoin holding", "corporate btc", "bitcoin balance sheet",
+})
+
+
+def _filter_treasury(news_list: list) -> list:
+    return [
+        i for i in news_list
+        if any(k in (i.get("title", "") + " " + i.get("description", "")).lower()
+               for k in _TREASURY_KEYWORDS)
+    ]
+
+
+def fetch_btc_treasury_news() -> list:
+    """BTC Treasury 관련 뉴스 수집 (7일)"""
+    collected = []
+
+    # Google News RSS
+    for q in ["bitcoin treasury corporate", "microstrategy bitcoin"]:
+        try:
+            url = f"https://news.google.com/rss/search?q={q.replace(' ', '+')}&hl=en&gl=US&ceid=US:en"
+            collected.extend(_btc_rss([url], "Google News", days=7))
+        except Exception:
+            pass
+
+    # Yahoo Finance MSTR
+    try:
+        collected.extend(fetch_rss_feed(
+            "https://finance.yahoo.com/rss/headline?s=MSTR", "Yahoo Finance"))
+    except Exception:
+        pass
+
+    # CoinTelegraph — keyword filter
+    try:
+        items = _btc_rss([
+            "https://cointelegraph.com/rss/tag/bitcoin",
+            "https://cointelegraph.com/rss",
+        ], "CoinTelegraph", days=7)
+        collected.extend(_filter_treasury(items))
+    except Exception:
+        pass
+
+    # CoinDesk — keyword filter
+    try:
+        collected.extend(_filter_treasury(fetch_coindesk()))
+    except Exception:
+        pass
+
+    # The Block
+    try:
+        items = _btc_rss(["https://www.theblock.co/rss/all.xml"], "The Block", days=7)
+        collected.extend(_filter_treasury(items))
+    except Exception:
+        pass
+
+    result = dedup(collected)
+    result.sort(key=lambda x: x.get("published_at", ""), reverse=True)
+    return result[:30]
+
+
+def summarize_btc_treasury_gemini(holdings: list, news: list, api_key: str) -> str:
+    """BTC Treasury 보유량 + 뉴스 AI 분석"""
+    try:
+        from google import genai
+        from google.genai import types
+    except ImportError:
+        return ""
+
+    valid = [r for r in holdings if not r.get("_error")][:20]
+    holdings_text = "\n".join(
+        f"{i + 1}. " + " | ".join(f"{k}: {v}" for k, v in r.items() if not k.startswith("_") and v)
+        for i, r in enumerate(valid)
+    ) if valid else "보유 데이터 없음"
+
+    news_text = "\n".join(
+        f"- [{item.get('source', '')}] {item.get('title', '')}"
+        + (f" — {item.get('description', '')[:120]}" if item.get("description") else "")
+        for item in news[:20]
+    ) if news else "관련 뉴스 없음"
+
+    prompt = (
+        "당신은 비트코인 기관 투자 및 기업 재무 전문 애널리스트입니다.\n"
+        "아래 데이터를 바탕으로 BTC 기업 보유 현황과 최근 동향을 분석해 주세요.\n\n"
+        f"## 상위 BTC 보유 기업 현황\n{holdings_text}\n\n"
+        f"## 최근 관련 뉴스 (7일)\n{news_text}\n\n"
+        "다음 항목을 포함해 한국어로 분석하세요:\n"
+        "1. 📊 전체 현황 요약 (총 보유량 추정, 기업 수, 시장 의미)\n"
+        "2. 🏆 주요 보유 기업 분석 (투자 배경, 전략)\n"
+        "3. 📰 최근 뉴스 핵심 동향\n"
+        "4. 📈 기관 채택 트렌드 및 향후 전망\n"
+        "5. ⚠️ 리스크 및 주의사항\n\n"
+        "각 섹션은 명확히 구분하고, 객관적 사실에 근거해 분석하세요."
+    )
+
+    client = genai.Client(api_key=api_key)
+    try:
+        return _gemini_generate(client, types, prompt, temperature=0.3, max_output_tokens=8000)
+    except Exception as e:
+        return f"AI 분석 오류: {e}"
 
 
 def fetch_usdt_apy(min_tvl: float = 1_000_000, max_apy: float = 50, top_n: int = 50) -> tuple:
@@ -1858,8 +2034,64 @@ def fetch_aave_v3_usdt_history(pool_id: str) -> dict:
     return {"pool_id": pool_id, "history": history}
 
 
-def summarize_usdt_apy_gemini(pools: list, history: list, api_key: str) -> str:
-    """USDT APY 데이터 + Aave V3 히스토리를 Gemini로 분석."""
+_USDT_APY_KEYWORDS = frozenset({
+    "usdt", "tether", "stablecoin yield", "stablecoin apy", "defi yield",
+    "aave", "compound", "curve finance", "lending rate", "stable apy",
+    "defi lending", "usdt apy", "usdt yield", "stable yield",
+    "yield farming", "liquidity pool usdt",
+})
+
+
+def fetch_usdt_apy_news() -> list:
+    """USDT/DeFi 수익률 관련 뉴스 수집 (7일)"""
+    def _kw_filter(items):
+        return [
+            i for i in items
+            if any(k in (i.get("title", "") + " " + i.get("description", "")).lower()
+                   for k in _USDT_APY_KEYWORDS)
+        ]
+
+    collected = []
+
+    # Google News RSS
+    for q in ["USDT DeFi yield APY", "stablecoin lending rate DeFi"]:
+        try:
+            url = f"https://news.google.com/rss/search?q={q.replace(' ', '+')}&hl=en&gl=US&ceid=US:en"
+            collected.extend(_btc_rss([url], "Google News", days=7))
+        except Exception:
+            pass
+
+    # Yahoo Finance — stablecoin/DeFi keyword filter
+    try:
+        collected.extend(_kw_filter(
+            fetch_rss_feed("https://finance.yahoo.com/news/rssindex", "Yahoo Finance")))
+    except Exception:
+        pass
+
+    # CoinTelegraph
+    try:
+        items = _btc_rss([
+            "https://cointelegraph.com/rss/tag/defi",
+            "https://cointelegraph.com/rss",
+        ], "CoinTelegraph", days=7)
+        collected.extend(_kw_filter(items))
+    except Exception:
+        pass
+
+    # CoinDesk
+    try:
+        collected.extend(_kw_filter(fetch_coindesk()))
+    except Exception:
+        pass
+
+    result = dedup(collected)
+    result.sort(key=lambda x: x.get("published_at", ""), reverse=True)
+    return result[:25]
+
+
+def summarize_usdt_apy_gemini(pools: list, history: list, api_key: str,
+                              news: list | None = None) -> str:
+    """USDT APY 데이터 + Aave V3 히스토리 + 뉴스를 Gemini로 분석."""
     try:
         from google import genai
         from google.genai import types
@@ -1883,15 +2115,35 @@ def summarize_usdt_apy_gemini(pools: list, history: list, api_key: str) -> str:
             f"- APY 변화: {apy_chg:+.2f}%p  /  TVL 변화: {tvl_chg:+.1f}%\n"
             f"- 최근 90일 평균 APY: {avg90:.2f}%"
         )
+    news_text = ""
+    if news:
+        news_text = "\n## 최근 관련 뉴스 (7일)\n" + "\n".join(
+            f"- [{item.get('source', '')}] {item.get('title', '')}"
+            + (f" — {item.get('description', '')[:100]}" if item.get("description") else "")
+            for item in news[:15]
+        )
     prompt = (
-        f"다음은 {TODAY_STR} 기준 USDT DeFi 수익률 현황입니다.\n\n"
+        f"당신은 DeFi 수익률 및 암호화폐 시장 상관관계 전문 애널리스트입니다.\n"
+        f"분석 기준일: {TODAY_STR}\n\n"
         f"## USDT 상위 풀 (APY 순)\n{top_pools_text}\n\n"
-        f"## Aave V3 Ethereum USDT 추세\n{aave_text}\n\n"
-        "위 데이터를 바탕으로 한국어로 분석해주세요:\n"
-        "1. 현재 USDT DeFi 수익률 환경 평가 (수준·분포·전통금융 대비)\n"
-        "2. Aave V3 APY/TVL 장기 추세에서 읽히는 시장 신호\n"
-        "3. 주목할 고수익 풀과 프로토콜별 리스크 요인\n"
-        "4. 투자자 관점 전략적 시사점"
+        f"## Aave V3 Ethereum USDT 추세 (2023.01~현재)\n{aave_text}\n"
+        f"{news_text}\n\n"
+        "위 데이터를 바탕으로 아래 항목을 한국어로 심층 분석해주세요.\n\n"
+        "1. 📊 현재 USDT DeFi 수익률 환경\n"
+        "   - 전체 수준·분포 평가, 전통금융(MMF·국채) 대비 매력도\n\n"
+        "2. 📈 Aave V3 APY/TVL 장기 추세 해석\n"
+        "   - 주요 변곡점과 배경 요인, 현재 국면 진단\n\n"
+        "3. 🔗 USDT APY와 BTC 가격의 상관관계 심층분석\n"
+        "   - BTC 강세장/약세장 국면별 USDT DeFi 수익률 패턴\n"
+        "   - APY 급등·급락이 BTC 가격에 선행·동행·후행하는 메커니즘\n"
+        "     (예: 강세장 → 레버리지 수요 증가 → USDT 차입 수요 상승 → APY↑)\n"
+        "   - Aave TVL 변화와 BTC 시장 심리의 연관성\n"
+        "   - 현재 APY 수준이 BTC 시장 방향에 시사하는 신호\n\n"
+        "4. 🎯 주목할 고수익 풀과 프로토콜별 리스크\n\n"
+        "5. 📰 최근 뉴스 핵심 동향\n\n"
+        "6. 💡 투자자 전략적 시사점\n"
+        "   - USDT APY 수준별 최적 자산배분 전략\n"
+        "   - BTC 가격 국면에 따른 DeFi 수익률 활용법"
     )
     client = genai.Client(api_key=api_key)
     try:
@@ -1956,11 +2208,12 @@ def init_session():
             if fk not in st.session_state:
                 st.session_state[fk] = [] if key=="news_data" else ({} if key=="source_stats" else "")
     _str_keys = ("discord_last_sent","discord_last_sent_date","combined_last_run_at",
-                 "combined_last_run_status","btc_sentiment","stock_sentiment","usdt_apy_ai_summary")
+                 "combined_last_run_status","btc_sentiment","stock_sentiment",
+                 "usdt_apy_ai_summary","btc_treasury_ai_summary")
     for k in _str_keys:
         if k not in st.session_state:
             st.session_state[k] = ""
-    for k in ("btc_treasury_data", "usdt_apy_data"):
+    for k in ("btc_treasury_data", "btc_treasury_news_data", "usdt_apy_data", "usdt_apy_news_data"):
         if k not in st.session_state:
             st.session_state[k] = []
     if "usdt_apy_aave_history" not in st.session_state:
@@ -2069,7 +2322,9 @@ with st.sidebar:
 
     elif is_treasury:
         st.markdown("**데이터 소스**")
-        st.caption("bitcointreasuries.net")
+        st.caption("bitbo.io/treasuries")
+        _trs_news = st.checkbox("관련 뉴스 수집", value=True,
+                                help="Google News · CoinTelegraph · CoinDesk · The Block")
         run_label = "BTC Treasury 조회"
 
     elif is_usdt_apy:
@@ -2082,7 +2337,9 @@ with st.sidebar:
 
     elif is_combined:
         st.markdown("**수집 대상 (자동)**")
-        for _cl in ["📈 주식 뉴스", "🪙 코인 뉴스", "📊 BTC 기술적 분석", "🔗 BTC 온체인 분석", "🏆 M7 기술적 분석"]:
+        for _cl in ["📈 주식 뉴스", "🪙 코인 뉴스", "📊 BTC 기술적 분석",
+                    "🔗 BTC 온체인 분석", "🏆 M7 기술적 분석",
+                    "🏦 BTC Treasury", "💵 USDT APY"]:
             st.checkbox(_cl, value=True, disabled=True, key=f"_combined_chk_{_cl}")
         run_label = "AI 종합분석 실행"
 
@@ -2149,26 +2406,6 @@ if auto_run_combined:
     run_combined_analysis_pipeline(use_ai, ai_providers, trigger_source="login")
     st.rerun()
 
-# ── USDT APY 자동 실행
-if is_usdt_apy:
-    _need_data = not st.session_state.get("usdt_apy_data")
-    _need_ai   = (use_ai and GEMINI_API_KEY and "Gemini 2.5 Pro" in ai_providers
-                  and not st.session_state.get("usdt_apy_ai_summary"))
-    if _need_data or _need_ai:
-        if _need_data:
-            with st.spinner("💵 USDT APY 데이터 수집 중..."):
-                _auto_data, _auto_pid = fetch_usdt_apy()
-            st.session_state["usdt_apy_data"] = _auto_data
-            if _auto_pid:
-                with st.spinner("📈 Aave V3 히스토리 수집 중..."):
-                    st.session_state["usdt_apy_aave_history"] = fetch_aave_v3_usdt_history(_auto_pid)
-        if _need_ai:
-            _hist_list = st.session_state.get("usdt_apy_aave_history", {}).get("history", [])
-            with st.spinner("🤖 AI 분석 중..."):
-                st.session_state["usdt_apy_ai_summary"] = summarize_usdt_apy_gemini(
-                    st.session_state["usdt_apy_data"], _hist_list, GEMINI_API_KEY)
-        st.rerun()
-
 if run_btn:
     all_raw, source_map = [], {}
 
@@ -2210,8 +2447,18 @@ if run_btn:
 
     elif is_treasury:
         with st.spinner("🏦 bitcointreasuries.net 수집 중..."):
-            _data = fetch_btc_treasuries()
-        st.session_state["btc_treasury_data"] = _data
+            _td = fetch_btc_treasuries()
+        st.session_state["btc_treasury_data"] = _td
+        st.session_state["btc_treasury_ai_summary"] = ""
+        st.session_state["btc_treasury_news_data"] = []
+        if _trs_news:
+            with st.spinner("📰 BTC Treasury 뉴스 수집 중..."):
+                _tnews = fetch_btc_treasury_news()
+            st.session_state["btc_treasury_news_data"] = _tnews
+        if use_ai and GEMINI_API_KEY and "Gemini 2.5 Pro" in ai_providers:
+            with st.spinner("🤖 AI 분석 중..."):
+                st.session_state["btc_treasury_ai_summary"] = summarize_btc_treasury_gemini(
+                    _td, st.session_state["btc_treasury_news_data"], GEMINI_API_KEY)
         st.rerun()
 
     elif is_usdt_apy:
@@ -2222,16 +2469,21 @@ if run_btn:
                 top_n=_top_n_v,
             )
         st.session_state["usdt_apy_data"] = _data
-        st.session_state["usdt_apy_ai_summary"] = ""  # 재수집 시 AI 결과 초기화
+        st.session_state["usdt_apy_ai_summary"] = ""
+        st.session_state["usdt_apy_news_data"] = []
         if _aave_pid:
             with st.spinner("📈 Aave V3 히스토리 수집 중..."):
                 _hist = fetch_aave_v3_usdt_history(_aave_pid)
             st.session_state["usdt_apy_aave_history"] = _hist
+        with st.spinner("📰 USDT/DeFi 뉴스 수집 중..."):
+            _usdt_news = fetch_usdt_apy_news()
+        st.session_state["usdt_apy_news_data"] = _usdt_news
         if use_ai and GEMINI_API_KEY and "Gemini 2.5 Pro" in ai_providers:
             _hist_list = st.session_state["usdt_apy_aave_history"].get("history", [])
             with st.spinner("🤖 AI 분석 중..."):
                 st.session_state["usdt_apy_ai_summary"] = summarize_usdt_apy_gemini(
-                    _data, _hist_list, GEMINI_API_KEY)
+                    _data, _hist_list, GEMINI_API_KEY,
+                    st.session_state["usdt_apy_news_data"])
         st.rerun()
 
     elif is_combined:
@@ -2480,8 +2732,11 @@ st.markdown(f"""
 
 # ── BTC Treasury 모드 전용 화면
 if is_treasury:
-    _td = st.session_state.get("btc_treasury_data", [])
-    st.markdown(f"""
+    _td    = st.session_state.get("btc_treasury_data", [])
+    _tnews = st.session_state.get("btc_treasury_news_data", [])
+    _tai   = st.session_state.get("btc_treasury_ai_summary", "")
+
+    st.markdown("""
     <div class="cq-ai-card">
       <div class="cq-ai-header">
         <div class="cq-ai-dot" style="background:#F59E0B"></div>
@@ -2489,6 +2744,7 @@ if is_treasury:
         <div class="cq-ai-provider">출처: bitcointreasuries.net</div>
       </div>
     </div>""", unsafe_allow_html=True)
+
     if not _td:
         st.markdown("""
         <div class="cq-empty">
@@ -2497,23 +2753,98 @@ if is_treasury:
           <p>사이드바의 <b>🚀 BTC Treasury 조회</b> 버튼을 클릭하세요.</p>
         </div>""", unsafe_allow_html=True)
     elif "_error" in (_td[0] if _td else {}):
-        st.error(f"수집 실패: {_td[0]['_error']}\n\n💡 이 사이트는 JS 렌더링 기반일 수 있습니다.")
-        st.markdown(f"직접 확인: [{BTC_TREASURIES_URL}]({BTC_TREASURIES_URL})")
+        st.error(f"수집 실패: {_td[0]['_error']}")
+        st.markdown(f"직접 확인: [bitbo.io/treasuries]({BTC_TREASURIES_URL})")
     else:
-        st.markdown(f"**{len(_td)}개 기업** BTC 보유 데이터")
-        # 컬럼명 정리
-        cols_show = [c for c in (_td[0].keys() if _td else []) if not c.startswith("_")]
-        _rows_html = "".join(
-            "<tr>" + "".join(f"<td style='padding:6px 10px;border-bottom:1px solid #F3F4F6;font-size:.82rem'>{row.get(c,'')}</td>" for c in cols_show) + "</tr>"
-            for row in _td
-        )
-        _hdrs_html = "".join(f"<th style='padding:6px 10px;background:#F9FAFB;font-size:.78rem;color:#6B7280;font-weight:600;border-bottom:2px solid #E5E7EB;white-space:nowrap'>{c}</th>" for c in cols_show)
-        st.markdown(f"""
-<div style="overflow-x:auto;border:1px solid #E5E7EB;border-radius:10px;margin-top:8px">
-<table style="width:100%;border-collapse:collapse">
-  <thead><tr>{_hdrs_html}</tr></thead>
-  <tbody>{_rows_html}</tbody>
-</table></div>""", unsafe_allow_html=True)
+        valid = [r for r in _td if not r.get("_error")]
+        cols_show = [c for c in (valid[0].keys() if valid else []) if not c.startswith("_")]
+
+        top_name = valid[0].get(cols_show[0], "N/A") if valid and cols_show else "N/A"
+        _c1, _c2, _c3 = st.columns(3)
+        with _c1: st.metric("📊 총 기업 수", f"{len(valid)}개")
+        with _c2: st.metric("🏆 최대 보유", top_name)
+        with _c3: st.metric("📅 업데이트", TODAY_STR)
+
+        # 정렬 가능 테이블
+        _cols_js = json.dumps(cols_show)
+        _rows_js = json.dumps([[r.get(c, "") for c in cols_show] for r in valid])
+        _tbl_h   = 890
+        components.html(f"""
+<style>
+.outer{{border:1px solid #E5E7EB;border-radius:10px;overflow:hidden;margin-top:8px}}
+.scroll{{overflow-y:auto;overflow-x:auto;max-height:850px}}
+table{{width:100%;border-collapse:collapse;min-width:600px;font-family:sans-serif}}
+th{{background:#F9FAFB;padding:8px 10px;font-size:.78rem;color:#6B7280;font-weight:600;
+    border-bottom:2px solid #E5E7EB;white-space:nowrap;position:sticky;top:0;z-index:2}}
+th.sortable{{cursor:pointer}}th.sortable:hover{{background:#F3F4F6}}
+.arrow{{margin-left:4px;opacity:.4}}
+th.asc .arrow,th.desc .arrow{{opacity:1}}
+td{{padding:6px 10px;border-bottom:1px solid #F3F4F6;font-size:.82rem;white-space:nowrap}}
+tr:hover td{{background:#FAFAFA}}tr:last-child td{{border-bottom:none}}
+td:first-child{{font-weight:600;color:#374151;text-align:center;width:36px}}
+</style>
+<div class="outer"><div class="scroll"><table id="tbl">
+<thead><tr id="hdr"></tr></thead><tbody id="body"></tbody>
+</table></div></div>
+<script>
+var COLS={_cols_js},rows={_rows_js},sortCol=-1,sortAsc=false;
+function render(data){{
+  var tb=document.getElementById('body');tb.innerHTML='';
+  data.forEach(function(r,i){{
+    var tr=document.createElement('tr');
+    var td0=document.createElement('td');td0.textContent=i+1;tr.appendChild(td0);
+    COLS.forEach(function(c,ci){{
+      var td=document.createElement('td');
+      td.textContent=r[ci]!==undefined?r[ci]:'';tr.appendChild(td);
+    }});tb.appendChild(tr);
+  }});
+}}
+function buildHeader(){{
+  var hdr=document.getElementById('hdr');
+  var th0=document.createElement('th');th0.textContent='#';hdr.appendChild(th0);
+  COLS.forEach(function(col,ci){{
+    var th=document.createElement('th');
+    th.className='sortable';th.id='th'+ci;
+    th.innerHTML=col+'<span class="arrow">⇅</span>';
+    th.addEventListener('click',function(){{
+      var asc=(sortCol===ci)?!sortAsc:false;sortCol=ci;sortAsc=asc;
+      COLS.forEach(function(_,k){{
+        var t=document.getElementById('th'+k);if(!t)return;
+        t.classList.remove('asc','desc');
+        var a=t.querySelector('.arrow');if(a)a.textContent='⇅';
+      }});
+      th.classList.add(asc?'asc':'desc');
+      th.querySelector('.arrow').textContent=asc?'↑':'↓';
+      var s=rows.slice().sort(function(a,b){{
+        var av=a[ci],bv=b[ci];
+        var an=parseFloat(String(av).replace(/[,\\$%\\s]/g,'')),
+            bn=parseFloat(String(bv).replace(/[,\\$%\\s]/g,''));
+        if(!isNaN(an)&&!isNaN(bn))return asc?an-bn:bn-an;
+        return asc?String(av).localeCompare(String(bv)):String(bv).localeCompare(String(av));
+      }});render(s);
+    }});hdr.appendChild(th);
+  }});
+}}
+buildHeader();render(rows);
+</script>
+""", height=_tbl_h)
+        st.caption(f"총 {len(valid)}개 기업 | 출처: bitbo.io/treasuries")
+
+        if _tai:
+            st.markdown("---")
+            st.markdown("### 🤖 AI 분석")
+            _copy_btn(_tai)
+            st.markdown(_tai)
+
+        if _tnews:
+            st.markdown("---")
+            st.markdown(
+                f'<div style="font-size:.78rem;color:#6b7280;margin-bottom:6px">'
+                f'📌 뉴스 {len(_tnews)}건</div>'
+                + "".join(render_news_row(item) for item in _tnews),
+                unsafe_allow_html=True,
+            )
+
     st.markdown("</div>", unsafe_allow_html=True)
     st.stop()
 
@@ -2594,13 +2925,14 @@ if is_usdt_apy:
             [row.get(c, "") for c in _cols] for row in _ud
         ])
         _tvl_idx = _cols.index("TVL($)")
-        _tbl_height = min(44 * len(_ud) + 80, 800)
         components.html(f"""
 <style>
   body{{margin:0;font-family:sans-serif}}
-  .wrap{{overflow-x:auto;border:1px solid #E5E7EB;border-radius:10px}}
-  table{{width:100%;border-collapse:collapse}}
+  .outer{{border:1px solid #E5E7EB;border-radius:10px;overflow:hidden}}
+  .scroll{{overflow-y:auto;overflow-x:auto;max-height:600px}}
+  table{{width:100%;border-collapse:collapse;min-width:700px}}
   th{{padding:7px 10px;background:#F9FAFB;font-size:.75rem;color:#6B7280;
+      position:sticky;top:0;z-index:2;
       font-weight:600;border-bottom:2px solid #E5E7EB;white-space:nowrap;user-select:none}}
   th.sortable{{cursor:pointer}}
   th.sortable:hover{{background:#F3F4F6;color:#374151}}
@@ -2612,10 +2944,10 @@ if is_usdt_apy:
   td.idx{{font-weight:600;color:#111827}}
   tr:last-child td{{border-bottom:none}}
 </style>
-<div class="wrap"><table id="tbl">
+<div class="outer"><div class="scroll"><table id="tbl">
 <thead><tr id="hdr"></tr></thead>
 <tbody id="body"></tbody>
-</table></div>
+</table></div></div>
 <script>
 var COLS = {json.dumps(_cols)};
 var SORT_COLS = {json.dumps(list(_sort_cols))};
@@ -2697,7 +3029,7 @@ function buildHeader() {{
 buildHeader();
 render(rows);
 </script>
-""", height=_tbl_height)
+""", height=660)
         st.caption("⚠️ APR은 APY에서 역산한 추정치(일 복리 기준). 투자 조언이 아닙니다.")
 
         # ── AI 분석 결과 ─────────────────────────────
@@ -2707,6 +3039,16 @@ render(rows);
             st.markdown("#### 🤖 AI 분석 리포트")
             _copy_btn(_ai_sum)
             st.markdown(_ai_sum)
+
+        _unews = st.session_state.get("usdt_apy_news_data", [])
+        if _unews:
+            st.markdown("---")
+            st.markdown(
+                f'<div style="font-size:.78rem;color:#6b7280;margin-bottom:6px">'
+                f'📌 뉴스 {len(_unews)}건</div>'
+                + "".join(render_news_row(item) for item in _unews),
+                unsafe_allow_html=True,
+            )
     st.markdown("</div>", unsafe_allow_html=True)
     st.stop()
 
@@ -2952,8 +3294,8 @@ FOOTER_SRC = {
     "ta":           "CoinTelegraph · AMBCrypto · Glassnode · CryptoSlate · Coinglass · The Block · CoinDesk · Reddit",
     "oc":           "CoinTelegraph · AMBCrypto · Glassnode · CryptoSlate · Coinglass · The Block · CoinDesk · Reddit",
     "m7":           "Yahoo Finance · Benzinga · MarketWatch · CNBC · Seeking Alpha · Finnhub · Reddit",
-    "btc_treasury": "bitcointreasuries.net",
-    "usdt_apy":     "DefiLlama API (yields.llama.fi)",
+    "btc_treasury": "bitbo.io/treasuries · Google News · CoinTelegraph · CoinDesk · The Block",
+    "usdt_apy":     "DefiLlama API · Google News · CoinTelegraph · CoinDesk · Yahoo Finance",
 }
 st.markdown(f"""
 <div class="cq-footer">
