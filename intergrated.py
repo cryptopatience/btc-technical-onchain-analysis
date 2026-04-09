@@ -636,6 +636,7 @@ SENTIMENT_BTC=극단적공포|공포|중립|탐욕|극단적탐욕 SENTIMENT_STO
 
 # ── AI 요약 ────────────────────────────────────────
 def summarize_gemini(news_list, api_key, prompt_quick, prompt_deep):
+    import time
     try:
         from google import genai
         from google.genai import types
@@ -648,19 +649,29 @@ def summarize_gemini(news_list, api_key, prompt_quick, prompt_deep):
         if r.text is not None: return r.text
         try: return r.candidates[0].content.parts[0].text or ""
         except Exception: return ""
+    def _call(prompt, **kw):
+        delays = [10, 20, 40]
+        for attempt, delay in enumerate(delays + [None], 1):
+            try:
+                return _ex(client.models.generate_content(
+                    model="gemini-2.5-pro",
+                    contents=prompt,
+                    config=types.GenerateContentConfig(**kw)))
+            except Exception as e:
+                if delay is None or "503" not in str(e) and "UNAVAILABLE" not in str(e):
+                    raise
+                st.info(f"Gemini 503 — {delay}초 후 재시도 ({attempt}/3)...")
+                time.sleep(delay)
+        return ""
     q, d = "", ""
     try:
-        q = _ex(client.models.generate_content(
-            model="gemini-2.5-pro",
-            contents=prompt_quick.format(date=TODAY_STR, content=content),
-            config=types.GenerateContentConfig(temperature=0.4, max_output_tokens=8000)))
+        q = _call(prompt_quick.format(date=TODAY_STR, content=content),
+                  temperature=0.4, max_output_tokens=8000)
     except Exception as e:
         st.warning(f"Gemini Quick 오류: {e}")
     try:
-        d = _ex(client.models.generate_content(
-            model="gemini-2.5-pro",
-            contents=prompt_deep.format(date=TODAY_STR, content=content),
-            config=types.GenerateContentConfig(temperature=0.35, max_output_tokens=16000)))
+        d = _call(prompt_deep.format(date=TODAY_STR, content=content),
+                  temperature=0.35, max_output_tokens=16000)
     except Exception as e:
         st.warning(f"Gemini Deep 오류: {e}")
     return q, d
@@ -734,15 +745,22 @@ def summarize_combined_gemini(deep_dives: dict, api_key: str) -> str:
     )
     if not sections:
         return ""
+    import time
     client = genai.Client(api_key=api_key)
-    try:
-        r = client.models.generate_content(
-            model="gemini-2.5-pro",
-            contents=PROMPT_COMBINED.format(date=TODAY_STR, sections=sections),
-            config=types.GenerateContentConfig(temperature=0.35, max_output_tokens=16000))
-        return r.text if r.text is not None else r.candidates[0].content.parts[0].text or ""
-    except Exception as e:
-        return f"[Gemini 오류: {e}]"
+    delays = [10, 20, 40]
+    for attempt, delay in enumerate(delays + [None], 1):
+        try:
+            r = client.models.generate_content(
+                model="gemini-2.5-pro",
+                contents=PROMPT_COMBINED.format(date=TODAY_STR, sections=sections),
+                config=types.GenerateContentConfig(temperature=0.35, max_output_tokens=16000))
+            return r.text if r.text is not None else r.candidates[0].content.parts[0].text or ""
+        except Exception as e:
+            if delay is None or "503" not in str(e) and "UNAVAILABLE" not in str(e):
+                return f"[Gemini 오류: {e}]"
+            st.info(f"Gemini 503 — {delay}초 후 재시도 ({attempt}/3)...")
+            time.sleep(delay)
+    return "[Gemini 오류: 재시도 초과]"
 
 
 def summarize_combined_openai(deep_dives: dict, api_key: str) -> str:
@@ -2192,19 +2210,25 @@ document.getElementById('copybtn').addEventListener('click', function() {{
       btn.style.borderColor = '#E5E7EB';
     }}, 1500);
   }}
-  if (navigator.clipboard && navigator.clipboard.writeText) {{
-    navigator.clipboard.writeText(txt).then(done).catch(function() {{ fallback(txt); }});
+  /* iframe 안에서는 parent window의 clipboard를 우선 사용 */
+  var cb = (window.parent && window.parent.navigator && window.parent.navigator.clipboard)
+    ? window.parent.navigator.clipboard
+    : (navigator.clipboard || null);
+  if (cb && cb.writeText) {{
+    cb.writeText(txt).then(done).catch(function() {{ fallback(txt); }});
   }} else {{
     fallback(txt);
   }}
   function fallback(t) {{
-    var ta = document.createElement('textarea');
+    /* parent document에 textarea를 붙여 execCommand 실행 */
+    var doc = (window.parent && window.parent.document) ? window.parent.document : document;
+    var ta = doc.createElement('textarea');
     ta.value = t;
-    ta.style.cssText = 'position:fixed;left:-9999px;top:-9999px';
-    document.body.appendChild(ta);
+    ta.style.cssText = 'position:fixed;left:-9999px;top:-9999px;opacity:0';
+    doc.body.appendChild(ta);
     ta.focus(); ta.select();
-    try {{ document.execCommand('copy'); done(); }} catch(e) {{}}
-    document.body.removeChild(ta);
+    try {{ doc.execCommand('copy'); done(); }} catch(e) {{ alert('복사 실패: 텍스트를 직접 선택해 주세요.'); }}
+    doc.body.removeChild(ta);
   }}
 }});
 </script>
