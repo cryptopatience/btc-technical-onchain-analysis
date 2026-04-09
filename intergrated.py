@@ -2193,6 +2193,8 @@ def save_cache():
             "combined_last_run_status",
             "btc_sentiment",
             "stock_sentiment",
+            "btc_treasury_snapshot",   # {date, data} 이전 보유량 스냅샷
+            "btc_treasury_history",    # [{date, btc_map}] 최대 90일 히스토리
         ]
         data = {k: st.session_state[k] for k in keys_to_save if k in st.session_state}
         with open(CACHE_FILE, "w", encoding="utf-8") as f:
@@ -2218,6 +2220,10 @@ def init_session():
             st.session_state[k] = []
     if "usdt_apy_aave_history" not in st.session_state:
         st.session_state["usdt_apy_aave_history"] = {}
+    if "btc_treasury_snapshot" not in st.session_state:
+        st.session_state["btc_treasury_snapshot"] = {}
+    if "btc_treasury_history" not in st.session_state:
+        st.session_state["btc_treasury_history"] = []  # [{"date":str,"btc_map":{entity:float}}]
 
 init_session()
 load_cache()
@@ -2446,8 +2452,66 @@ if run_btn:
         post_filter = filter_ta_news if is_ta else filter_onchain_news
 
     elif is_treasury:
-        with st.spinner("🏦 bitcointreasuries.net 수집 중..."):
+        with st.spinner("🏦 bitbo.io 수집 중..."):
             _td = fetch_btc_treasuries()
+
+        # ── 히스토리 기반 비교
+        def _parse_btc(s):
+            try: return float(str(s).replace(",", "").strip())
+            except: return None
+
+        # 현재 btc_map 생성
+        _cur_map = {}
+        for row in _td:
+            if row.get("_error"): continue
+            v = _parse_btc(row.get("# of BTC", ""))
+            if v is not None:
+                _cur_map[row.get("Entity", "")] = v
+
+        # 히스토리 로드
+        _history = st.session_state.get("btc_treasury_history", [])
+
+        # ── 비교 기준 스냅샷 선택
+        import datetime as _dt
+        _today_d  = _dt.date.today()
+        _30d_ago  = (_today_d - _dt.timedelta(days=30)).isoformat()
+        _90d_ago  = (_today_d - _dt.timedelta(days=90)).isoformat()
+
+        # 전회 (오늘 제외 가장 최근)
+        _prev_snap = next((h for h in reversed(_history) if h["date"] != TODAY_STR), None)
+        # 1개월 전 (30일 이내 가장 오래된 것)
+        _1m_snap = next((h for h in _history if h["date"] >= _30d_ago), None) or \
+                   (_history[0] if _history else None)
+        # 3개월 전 (90일 이내 가장 오래된 것)
+        _3m_snap = next((h for h in _history if h["date"] >= _90d_ago), None) or \
+                   (_history[0] if _history else None)
+
+        def _delta_str(cur, snap, entity):
+            if not snap or snap["date"] == TODAY_STR:
+                return "-"
+            old = snap["btc_map"].get(entity)
+            if cur is None or old is None:
+                return "신규"
+            d = cur - old
+            return f"{d:+,.1f}" if d != 0 else "변동없음"
+
+        for row in _td:
+            if row.get("_error"): continue
+            entity  = row.get("Entity", "")
+            cur_val = _cur_map.get(entity)
+            row["전회 대비"]  = _delta_str(cur_val, _prev_snap, entity)
+            row["1개월 변화"] = _delta_str(cur_val, _1m_snap,   entity)
+            row["3개월 변화"] = _delta_str(cur_val, _3m_snap,   entity)
+
+        # 오늘 날짜 스냅샷이 없으면 추가 (하루 1회), 최대 90개 유지
+        if not _history or _history[-1]["date"] != TODAY_STR:
+            _history.append({"date": TODAY_STR, "btc_map": _cur_map})
+            if len(_history) > 90:
+                _history = _history[-90:]
+            st.session_state["btc_treasury_history"] = _history
+
+        save_cache()
+
         st.session_state["btc_treasury_data"] = _td
         st.session_state["btc_treasury_ai_summary"] = ""
         st.session_state["btc_treasury_news_data"] = []
@@ -2782,6 +2846,8 @@ th.asc .arrow,th.desc .arrow{{opacity:1}}
 td{{padding:6px 10px;border-bottom:1px solid #F3F4F6;font-size:.82rem;white-space:nowrap}}
 tr:hover td{{background:#FAFAFA}}tr:last-child td{{border-bottom:none}}
 td:first-child{{font-weight:600;color:#374151;text-align:center;width:36px}}
+.up{{color:#059669;font-weight:600}}.dn{{color:#DC2626;font-weight:600}}
+.new{{color:#7C3AED;font-size:.75rem;font-weight:600}}
 </style>
 <div class="outer"><div class="scroll"><table id="tbl">
 <thead><tr id="hdr"></tr></thead><tbody id="body"></tbody>
@@ -2795,7 +2861,14 @@ function render(data){{
     var td0=document.createElement('td');td0.textContent=i+1;tr.appendChild(td0);
     COLS.forEach(function(c,ci){{
       var td=document.createElement('td');
-      td.textContent=r[ci]!==undefined?r[ci]:'';tr.appendChild(td);
+      var val=r[ci]!==undefined?r[ci]:'';
+      td.textContent=val;
+      if(c==='전회 대비'||c==='1개월 변화'||c==='3개월 변화'){{
+        if(val.startsWith('+'))td.className='up';
+        else if(val.startsWith('-')&&val!=='-')td.className='dn';
+        else if(val==='신규')td.className='new';
+      }}
+      tr.appendChild(td);
     }});tb.appendChild(tr);
   }});
 }}
@@ -2828,7 +2901,20 @@ function buildHeader(){{
 buildHeader();render(rows);
 </script>
 """, height=_tbl_h)
-        st.caption(f"총 {len(valid)}개 기업 | 출처: bitbo.io/treasuries")
+        _hist = st.session_state.get("btc_treasury_history", [])
+        import datetime as _dt2
+        _t = _dt2.date.today()
+        _prev_d = next((h["date"] for h in reversed(_hist) if h["date"] != TODAY_STR), None)
+        _1m_d = next((h["date"] for h in _hist
+                      if h["date"] >= (_t - _dt2.timedelta(days=30)).isoformat()), None)
+        _3m_d = next((h["date"] for h in _hist
+                      if h["date"] >= (_t - _dt2.timedelta(days=90)).isoformat()), None)
+        _cmp_parts = []
+        if _prev_d:              _cmp_parts.append(f"전회: {_prev_d}")
+        if _1m_d:                _cmp_parts.append(f"1개월: {_1m_d}")
+        if _3m_d and _3m_d != _1m_d: _cmp_parts.append(f"3개월: {_3m_d}")
+        _cmp_label = (" | " + " · ".join(_cmp_parts)) if _cmp_parts else " | 첫 조회 (다음 조회부터 비교 가능)"
+        st.caption(f"총 {len(valid)}개 기업 | 출처: bitbo.io/treasuries{_cmp_label} | 히스토리 {len(_hist)}일 축적")
 
         if _tai:
             st.markdown("---")
