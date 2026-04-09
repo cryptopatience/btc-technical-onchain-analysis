@@ -1689,6 +1689,129 @@ def filter_m7_news(news_list, selected_tickers):
 
 
 # ══════════════════════════════════════════════════
+# ── BTC Treasury & USDT APY 수집 ─────────────────
+# ══════════════════════════════════════════════════
+DEFILLAMA_POOLS_URL = "https://yields.llama.fi/pools"
+BTC_TREASURIES_URL  = "https://bitcointreasuries.net/"
+
+_SCRAPE_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                  "AppleWebKit/537.36 (KHTML, like Gecko) "
+                  "Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml",
+}
+
+
+def _fmt_usd(n):
+    if n is None or n != n: return "N/A"
+    if abs(n) >= 1e12: return f"${n/1e12:,.2f}T"
+    if abs(n) >= 1e9:  return f"${n/1e9:,.2f}B"
+    if abs(n) >= 1e6:  return f"${n/1e6:,.2f}M"
+    if abs(n) >= 1e3:  return f"${n/1e3:,.1f}K"
+    return f"${n:,.0f}"
+
+
+def fetch_btc_treasuries() -> list:
+    """bitcointreasuries.net 스크래핑 → list of dicts"""
+    try:
+        resp = requests.get(BTC_TREASURIES_URL, headers=_SCRAPE_HEADERS, timeout=15)
+        resp.raise_for_status()
+    except Exception as e:
+        return [{"_error": str(e)}]
+
+    soup = BeautifulSoup(resp.text, "html.parser")
+    tables = soup.find_all("table")
+    if not tables:
+        return [{"_error": "JS 렌더링 기반 — 테이블 미검출"}]
+
+    main_table = max(tables, key=lambda t: len(t.find_all("tr")))
+    rows = main_table.find_all("tr")
+    if len(rows) < 2:
+        return [{"_error": "데이터 없음"}]
+
+    hdrs = [th.get_text(strip=True) for th in rows[0].find_all(["th", "td"])]
+    result = []
+    for row in rows[1:]:
+        cells = [td.get_text(strip=True) for td in row.find_all(["td", "th"])]
+        if len(cells) < 2:
+            continue
+        result.append({hdrs[i] if i < len(hdrs) else f"col_{i}": v for i, v in enumerate(cells)})
+    return result if result else [{"_error": "파싱된 행 없음"}]
+
+
+def fetch_usdt_apy(min_tvl: float = 1_000_000, max_apy: float = 50, top_n: int = 50) -> tuple:
+    """DefiLlama 무료 API → (USDT 상위 풀 list, aave_v3_eth_pool_id str)"""
+    _h = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
+    try:
+        resp = requests.get(DEFILLAMA_POOLS_URL, headers=_h, timeout=30)
+        resp.raise_for_status()
+        raw = resp.json()
+    except Exception as e:
+        return [{"_error": str(e)}], ""
+
+    pools = raw.get("data", raw) if isinstance(raw, dict) else raw
+    result = []
+    aave_pool_id = ""
+    for p in pools:
+        sym = (p.get("symbol") or "").upper()
+        if sym != "USDT" or "-" in sym:
+            continue
+        # Aave V3 Ethereum USDT pool_id 기록
+        if (not aave_pool_id
+                and (p.get("project") or "").lower() == "aave-v3"
+                and (p.get("chain") or "").lower() == "ethereum"):
+            aave_pool_id = p.get("pool") or ""
+        tvl = p.get("tvlUsd") or 0
+        apy = p.get("apy") or 0
+        if tvl < min_tvl or apy <= 0 or apy > max_apy:
+            continue
+        apr = 365 * ((1 + apy / 100) ** (1 / 365) - 1) * 100
+        result.append({
+            "프로토콜":       (p.get("project") or "").replace("-", " ").title(),
+            "체인":           p.get("chain") or "",
+            "풀메타":         p.get("poolMeta") or "",
+            "TVL($)":         round(tvl),
+            "APY(%)":         round(apy, 2),
+            "APR(%)":         round(apr, 2),
+            "Base APY(%)":    round(p.get("apyBase") or 0, 2),
+            "Reward APY(%)":  round(p.get("apyReward") or 0, 2),
+        })
+    result.sort(key=lambda x: x["APY(%)"], reverse=True)
+    return (result[:top_n] if result else [{"_error": "조건에 맞는 풀 없음"}]), aave_pool_id
+
+
+def fetch_aave_v3_usdt_history(pool_id: str) -> dict:
+    """DefiLlama chart API → Aave V3 Ethereum USDT 1년 APY/TVL 히스토리"""
+    if not pool_id:
+        return {"error": "pool_id 없음"}
+    _h = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
+    try:
+        resp = requests.get(f"https://yields.llama.fi/chart/{pool_id}", headers=_h, timeout=30)
+        resp.raise_for_status()
+        raw_data = resp.json().get("data", [])
+    except Exception as e:
+        return {"error": str(e)}
+
+    cutoff = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) - datetime.timedelta(days=365)
+    history = []
+    for item in raw_data:
+        try:
+            ts_str = item.get("timestamp", "")
+            ts = datetime.datetime.fromisoformat(ts_str.replace("Z", "+00:00")).replace(tzinfo=None)
+            if ts < cutoff:
+                continue
+            history.append({
+                "date":    ts.strftime("%Y-%m-%d"),
+                "apy":     round(item.get("apy") or 0, 4),
+                "apyBase": round(item.get("apyBase") or 0, 4),
+                "tvlUsd":  round(item.get("tvlUsd") or 0),
+            })
+        except Exception:
+            continue
+    return {"pool_id": pool_id, "history": history}
+
+
+# ══════════════════════════════════════════════════
 # ── 세션 초기화 ───────────────────────────────────
 # ══════════════════════════════════════════════════
 CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "analysis_cache.json")
@@ -1738,15 +1861,23 @@ def save_cache():
 
 
 def init_session():
-    for prefix in ("stock_","coin_","ta_","oc_","m7_","combined_"):
+    for prefix in ("stock_","coin_","ta_","oc_","m7_","combined_","btc_treasury_","usdt_apy_"):
         for key in ("news_data","source_stats","summary_quick","summary_deep","provider"):
             fk = f"{prefix}{key}"
             if fk not in st.session_state:
                 st.session_state[fk] = [] if key=="news_data" else ({} if key=="source_stats" else "")
+    _list_keys = ("btc_treasury_data", "usdt_apy_data")
+    _dict_keys = ("usdt_apy_aave_history",)
     for k in ("discord_last_sent", "discord_last_sent_date", "combined_last_run_at", "combined_last_run_status",
-              "btc_sentiment", "stock_sentiment"):
+              "btc_sentiment", "stock_sentiment",
+              "btc_treasury_data", "usdt_apy_data", "usdt_apy_aave_history"):
         if k not in st.session_state:
-            st.session_state[k] = ""
+            if k in _list_keys:
+                st.session_state[k] = []
+            elif k in _dict_keys:
+                st.session_state[k] = {}
+            else:
+                st.session_state[k] = ""
 
 init_session()
 load_cache()
@@ -1776,6 +1907,8 @@ with st.sidebar:
         "📊  BTC 기술적 분석",
         "🔗  BTC 온체인 분석",
         "🏆  미국주식 기술적 분석",
+        "🏦  BTC Treasury",
+        "💵  USDT APY",
         "🤖  AI 종합분석",
     ], label_visibility="collapsed")
 
@@ -1785,15 +1918,19 @@ with st.sidebar:
         "📊  BTC 기술적 분석":     "ta",
         "🔗  BTC 온체인 분석":     "oc",
         "🏆  미국주식 기술적 분석": "m7",
+        "🏦  BTC Treasury":        "btc_treasury",
+        "💵  USDT APY":            "usdt_apy",
         "🤖  AI 종합분석":         "combined",
     }[mode_label]
 
-    is_stock    = nav_mode == "stock"
-    is_coin     = nav_mode == "coin"
-    is_ta       = nav_mode == "ta"
-    is_oc       = nav_mode == "oc"
-    is_m7       = nav_mode == "m7"
-    is_combined = nav_mode == "combined"
+    is_stock       = nav_mode == "stock"
+    is_coin        = nav_mode == "coin"
+    is_ta          = nav_mode == "ta"
+    is_oc          = nav_mode == "oc"
+    is_m7          = nav_mode == "m7"
+    is_treasury    = nav_mode == "btc_treasury"
+    is_usdt_apy    = nav_mode == "usdt_apy"
+    is_combined    = nav_mode == "combined"
 
     st.markdown('<div class="cq-divider"></div>', unsafe_allow_html=True)
 
@@ -1842,6 +1979,19 @@ with st.sidebar:
         src_cd     = st.checkbox("CoinDesk",                value=True)
         src_reddit = st.checkbox("Reddit BitcoinMarkets",   value=True)
         run_label = "BTC 기술적 분석 수집" if is_ta else "BTC 온체인 분석 수집"
+
+    elif is_treasury:
+        st.markdown("**데이터 소스**")
+        st.caption("bitcointreasuries.net")
+        run_label = "BTC Treasury 조회"
+
+    elif is_usdt_apy:
+        st.markdown("**데이터 소스**")
+        st.caption("DefiLlama API (무료)")
+        _min_tvl_m = st.slider("최소 TVL (백만$)", 0, 50, 1)
+        _max_apy_v = st.slider("최대 APY (%)", 10, 200, 50)
+        _top_n_v   = st.slider("상위 N개", 10, 100, 50)
+        run_label = "USDT APY 조회"
 
     elif is_combined:
         st.markdown("**수집 대상 (자동)**")
@@ -1950,6 +2100,26 @@ if run_btn:
         pq = PROMPT_TA_QUICK if is_ta else PROMPT_OC_QUICK
         pd_ = PROMPT_TA_DEEP if is_ta else PROMPT_OC_DEEP
         post_filter = filter_ta_news if is_ta else filter_onchain_news
+
+    elif is_treasury:
+        with st.spinner("🏦 bitcointreasuries.net 수집 중..."):
+            _data = fetch_btc_treasuries()
+        st.session_state["btc_treasury_data"] = _data
+        st.rerun()
+
+    elif is_usdt_apy:
+        with st.spinner("💵 DefiLlama USDT APY 수집 중..."):
+            _data, _aave_pid = fetch_usdt_apy(
+                min_tvl=_min_tvl_m * 1_000_000,
+                max_apy=_max_apy_v,
+                top_n=_top_n_v,
+            )
+        st.session_state["usdt_apy_data"] = _data
+        if _aave_pid:
+            with st.spinner("📈 Aave V3 USDT 1년 히스토리 수집 중..."):
+                _hist = fetch_aave_v3_usdt_history(_aave_pid)
+            st.session_state["usdt_apy_aave_history"] = _hist
+        st.rerun()
 
     elif is_combined:
         run_combined_analysis_pipeline(use_ai, ai_providers, trigger_source="manual")
@@ -2158,7 +2328,9 @@ if run_btn:
 # ══════════════════════════════════════════════════
 # ── 메인 화면 ─────────────────────────────────────
 # ══════════════════════════════════════════════════
-prefix        = {"stock":"stock_","coin":"coin_","ta":"ta_","oc":"oc_","m7":"m7_","combined":"combined_"}[nav_mode]
+prefix        = {"stock":"stock_","coin":"coin_","ta":"ta_","oc":"oc_","m7":"m7_",
+                 "btc_treasury":"btc_treasury_","usdt_apy":"usdt_apy_",
+                 "combined":"combined_"}[nav_mode]
 news_data     = st.session_state[f"{prefix}news_data"]
 source_stats  = st.session_state[f"{prefix}source_stats"]
 summary_quick = st.session_state[f"{prefix}summary_quick"]
@@ -2171,8 +2343,10 @@ MODE_CFG = {
     "coin":     {"title":"🪙 코인 뉴스",           "accent":"#F7931A", "icon":"🪙"},
     "ta":       {"title":"₿ BTC 기술적 분석",      "accent":"#F59E0B", "icon":"📊"},
     "oc":       {"title":"₿ BTC 온체인 분석",      "accent":"#8B5CF6", "icon":"🔗"},
-    "m7":       {"title":"🏆 미국주식 기술적 분석", "accent":"#10B981", "icon":"🏆"},
-    "combined": {"title":"🤖 AI 종합분석",         "accent":"#7C3AED", "icon":"🤖"},
+    "m7":           {"title":"🏆 미국주식 기술적 분석", "accent":"#10B981", "icon":"🏆"},
+    "btc_treasury": {"title":"🏦 BTC Treasury",      "accent":"#F59E0B", "icon":"🏦"},
+    "usdt_apy":     {"title":"💵 USDT APY",           "accent":"#10B981", "icon":"💵"},
+    "combined":     {"title":"🤖 AI 종합분석",         "accent":"#7C3AED", "icon":"🤖"},
 }
 cfg    = MODE_CFG[nav_mode]
 accent = cfg["accent"]
@@ -2248,6 +2422,144 @@ st.markdown(f"""
 </div>
 <div class="cq-content">
 """, unsafe_allow_html=True)
+
+# ── BTC Treasury 모드 전용 화면
+if is_treasury:
+    _td = st.session_state.get("btc_treasury_data", [])
+    st.markdown(f"""
+    <div class="cq-ai-card">
+      <div class="cq-ai-header">
+        <div class="cq-ai-dot" style="background:#F59E0B"></div>
+        <div class="cq-ai-title">🏦 BTC Treasury — 기업 BTC 보유 현황</div>
+        <div class="cq-ai-provider">출처: bitcointreasuries.net</div>
+      </div>
+    </div>""", unsafe_allow_html=True)
+    if not _td:
+        st.markdown("""
+        <div class="cq-empty">
+          <div class="empty-icon">🏦</div>
+          <h3>BTC Treasury</h3>
+          <p>사이드바의 <b>🚀 BTC Treasury 조회</b> 버튼을 클릭하세요.</p>
+        </div>""", unsafe_allow_html=True)
+    elif "_error" in (_td[0] if _td else {}):
+        st.error(f"수집 실패: {_td[0]['_error']}\n\n💡 이 사이트는 JS 렌더링 기반일 수 있습니다.")
+        st.markdown(f"직접 확인: [{BTC_TREASURIES_URL}]({BTC_TREASURIES_URL})")
+    else:
+        st.markdown(f"**{len(_td)}개 기업** BTC 보유 데이터")
+        # 컬럼명 정리
+        cols_show = [c for c in (_td[0].keys() if _td else []) if not c.startswith("_")]
+        _rows_html = "".join(
+            "<tr>" + "".join(f"<td style='padding:6px 10px;border-bottom:1px solid #F3F4F6;font-size:.82rem'>{row.get(c,'')}</td>" for c in cols_show) + "</tr>"
+            for row in _td
+        )
+        _hdrs_html = "".join(f"<th style='padding:6px 10px;background:#F9FAFB;font-size:.78rem;color:#6B7280;font-weight:600;border-bottom:2px solid #E5E7EB;white-space:nowrap'>{c}</th>" for c in cols_show)
+        st.markdown(f"""
+<div style="overflow-x:auto;border:1px solid #E5E7EB;border-radius:10px;margin-top:8px">
+<table style="width:100%;border-collapse:collapse">
+  <thead><tr>{_hdrs_html}</tr></thead>
+  <tbody>{_rows_html}</tbody>
+</table></div>""", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+    st.stop()
+
+# ── USDT APY 모드 전용 화면
+if is_usdt_apy:
+    _ud = st.session_state.get("usdt_apy_data", [])
+    st.markdown(f"""
+    <div class="cq-ai-card">
+      <div class="cq-ai-header">
+        <div class="cq-ai-dot" style="background:#10B981"></div>
+        <div class="cq-ai-title">💵 USDT APY — DeFi 수익률 순위</div>
+        <div class="cq-ai-provider">출처: DefiLlama (무료 API)</div>
+      </div>
+    </div>""", unsafe_allow_html=True)
+    if not _ud:
+        st.markdown("""
+        <div class="cq-empty">
+          <div class="empty-icon">💵</div>
+          <h3>USDT APY</h3>
+          <p>사이드바의 <b>🚀 USDT APY 조회</b> 버튼을 클릭하세요.</p>
+        </div>""", unsafe_allow_html=True)
+    elif "_error" in (_ud[0] if _ud else {}):
+        st.error(f"수집 실패: {_ud[0]['_error']}")
+    else:
+        _top_apy = max(r["APY(%)"] for r in _ud)
+        _avg_apy = sum(r["APY(%)"] for r in _ud) / len(_ud)
+        _tot_tvl = sum(r["TVL($)"] for r in _ud)
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("풀 수", f"{len(_ud)}개")
+        c2.metric("최고 APY", f"{_top_apy:.2f}%")
+        c3.metric("평균 APY", f"{_avg_apy:.2f}%")
+        c4.metric("총 TVL", _fmt_usd(_tot_tvl))
+
+        # ── Aave V3 Ethereum USDT 1년 히스토리 ──────────────
+        _ah = st.session_state.get("usdt_apy_aave_history", {})
+        _hist = _ah.get("history", []) if isinstance(_ah, dict) else []
+        if _hist:
+            st.markdown("---")
+            st.markdown("#### 📈 Aave V3 — USDT 1년 APY · TVL 변화")
+
+            # 통계 계산
+            _cur  = _hist[-1]
+            _old  = _hist[0]
+            _apy_cur  = _cur["apy"];    _apy_old  = _old["apy"]
+            _tvl_cur  = _cur["tvlUsd"]; _tvl_old  = _old["tvlUsd"]
+            _apy_chg  = _apy_cur - _apy_old
+            _tvl_chg_pct = ((_tvl_cur - _tvl_old) / _tvl_old * 100) if _tvl_old else 0
+
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("현재 APY",   f"{_apy_cur:.2f}%",
+                      delta=f"{_apy_chg:+.2f}%p (1년)",
+                      delta_color="normal")
+            m2.metric("1년 전 APY", f"{_apy_old:.2f}%")
+            m3.metric("현재 TVL",   _fmt_usd(_tvl_cur),
+                      delta=f"{_tvl_chg_pct:+.1f}% (1년)",
+                      delta_color="normal")
+            m4.metric("1년 전 TVL", _fmt_usd(_tvl_old))
+
+            # 날짜 레이블 (30일 간격으로 샘플링)
+            _step = max(1, len(_hist) // 30)
+            _dates  = [_hist[i]["date"] for i in range(0, len(_hist), _step)]
+            _apys   = [_hist[i]["apy"]  for i in range(0, len(_hist), _step)]
+            _tvls   = [_hist[i]["tvlUsd"] / 1e6 for i in range(0, len(_hist), _step)]  # $M 단위
+
+            ch1, ch2 = st.columns(2)
+            with ch1:
+                st.markdown("<div style='font-size:.8rem;color:#6B7280;margin-bottom:4px'>APY (%) — 30일 샘플</div>", unsafe_allow_html=True)
+                st.line_chart({"APY(%)": _apys}, height=200, use_container_width=True)
+                st.caption(f"{_dates[0]} → {_dates[-1]}")
+            with ch2:
+                st.markdown("<div style='font-size:.8rem;color:#6B7280;margin-bottom:4px'>TVL ($M) — 30일 샘플</div>", unsafe_allow_html=True)
+                st.line_chart({"TVL($M)": _tvls}, height=200, use_container_width=True)
+                st.caption(f"{_dates[0]} → {_dates[-1]}")
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown("#### 💹 USDT 풀 APY 전체 순위")
+        _cols = ["프로토콜", "체인", "풀메타", "APY(%)", "APR(%)", "Base APY(%)", "Reward APY(%)", "TVL($)"]
+        def _apy_cell(c, row):
+            clr = "#10B981" if c == "APY(%)" else "#374151"
+            fw  = "700"    if c == "APY(%)" else "400"
+            val = _fmt_usd(row[c]) if c == "TVL($)" else row.get(c, "")
+            return (f"<td style='padding:6px 10px;border-bottom:1px solid #F3F4F6;"
+                    f"font-size:.82rem;color:{clr};font-weight:{fw}'>{val}</td>")
+        _rows_html = "".join(
+            f"<tr><td style='padding:6px 10px;border-bottom:1px solid #F3F4F6;font-size:.82rem;font-weight:600;color:#111827'>{i+1}</td>"
+            + "".join(_apy_cell(c, row) for c in _cols) + "</tr>"
+            for i, row in enumerate(_ud)
+        )
+        _hdrs_html = "<th style='padding:6px 10px;background:#F9FAFB;font-size:.78rem;color:#6B7280;font-weight:600;border-bottom:2px solid #E5E7EB'>#</th>" + "".join(
+            f"<th style='padding:6px 10px;background:#F9FAFB;font-size:.78rem;color:#6B7280;font-weight:600;border-bottom:2px solid #E5E7EB;white-space:nowrap'>{c}</th>"
+            for c in _cols
+        )
+        st.markdown(f"""
+<div style="overflow-x:auto;border:1px solid #E5E7EB;border-radius:10px;margin-top:4px">
+<table style="width:100%;border-collapse:collapse">
+  <thead><tr>{_hdrs_html}</tr></thead>
+  <tbody>{_rows_html}</tbody>
+</table></div>""", unsafe_allow_html=True)
+        st.caption("⚠️ APR은 APY에서 역산한 추정치(일 복리 기준). 투자 조언이 아닙니다.")
+    st.markdown("</div>", unsafe_allow_html=True)
+    st.stop()
 
 # ── 종합분석 모드 전용 화면
 if is_combined:
@@ -2486,11 +2798,13 @@ st.markdown(
 
 # ── 푸터
 FOOTER_SRC = {
-    "stock": "Finnhub · Yahoo Finance · CNBC · MarketWatch · MNI Markets · MKT News",
-    "coin":  "CryptoPanic · CoinDesk · cryptonews.net · coincarp · The Block · cryptonews.com · Decrypt",
-    "ta":    "CoinTelegraph · AMBCrypto · Glassnode · CryptoSlate · Coinglass · The Block · CoinDesk · Reddit",
-    "oc":    "CoinTelegraph · AMBCrypto · Glassnode · CryptoSlate · Coinglass · The Block · CoinDesk · Reddit",
-    "m7":    "Yahoo Finance · Benzinga · MarketWatch · CNBC · Seeking Alpha · Finnhub · Reddit",
+    "stock":        "Finnhub · Yahoo Finance · CNBC · MarketWatch · MNI Markets · MKT News",
+    "coin":         "CryptoPanic · CoinDesk · cryptonews.net · coincarp · The Block · cryptonews.com · Decrypt",
+    "ta":           "CoinTelegraph · AMBCrypto · Glassnode · CryptoSlate · Coinglass · The Block · CoinDesk · Reddit",
+    "oc":           "CoinTelegraph · AMBCrypto · Glassnode · CryptoSlate · Coinglass · The Block · CoinDesk · Reddit",
+    "m7":           "Yahoo Finance · Benzinga · MarketWatch · CNBC · Seeking Alpha · Finnhub · Reddit",
+    "btc_treasury": "bitcointreasuries.net",
+    "usdt_apy":     "DefiLlama API (yields.llama.fi)",
 }
 st.markdown(f"""
 <div class="cq-footer">
