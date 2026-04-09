@@ -1792,7 +1792,7 @@ def fetch_aave_v3_usdt_history(pool_id: str) -> dict:
     except Exception as e:
         return {"error": str(e)}
 
-    cutoff = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) - datetime.timedelta(days=365)
+    cutoff = datetime.datetime(2023, 1, 1)
     history = []
     for item in raw_data:
         try:
@@ -2497,7 +2497,7 @@ if is_usdt_apy:
         _hist = _ah.get("history", []) if isinstance(_ah, dict) else []
         if _hist:
             st.markdown("---")
-            st.markdown("#### 📈 Aave V3 — USDT 1년 APY · TVL 변화")
+            st.markdown("#### 📈 Aave V3 — USDT APY · TVL 변화 (2023.01~)")
 
             # 통계 계산
             _cur  = _hist[-1]
@@ -2508,14 +2508,14 @@ if is_usdt_apy:
             _tvl_chg_pct = ((_tvl_cur - _tvl_old) / _tvl_old * 100) if _tvl_old else 0
 
             m1, m2, m3, m4 = st.columns(4)
-            m1.metric("현재 APY",   f"{_apy_cur:.2f}%",
-                      delta=f"{_apy_chg:+.2f}%p (1년)",
+            m1.metric("현재 APY",      f"{_apy_cur:.2f}%",
+                      delta=f"{_apy_chg:+.2f}%p (2023.01~)",
                       delta_color="normal")
-            m2.metric("1년 전 APY", f"{_apy_old:.2f}%")
-            m3.metric("현재 TVL",   _fmt_usd(_tvl_cur),
-                      delta=f"{_tvl_chg_pct:+.1f}% (1년)",
+            m2.metric("2023-01 APY", f"{_apy_old:.2f}%")
+            m3.metric("현재 TVL",      _fmt_usd(_tvl_cur),
+                      delta=f"{_tvl_chg_pct:+.1f}% (2023.01~)",
                       delta_color="normal")
-            m4.metric("1년 전 TVL", _fmt_usd(_tvl_old))
+            m4.metric("2023-01 TVL", _fmt_usd(_tvl_old))
 
             # 날짜 인덱스 DataFrame으로 1년 전체 표시
             import pandas as pd
@@ -2525,10 +2525,10 @@ if is_usdt_apy:
 
             ch1, ch2 = st.columns(2)
             with ch1:
-                st.markdown("<div style='font-size:.8rem;color:#6B7280;margin-bottom:4px'>APY (%) — 1년</div>", unsafe_allow_html=True)
+                st.markdown("<div style='font-size:.8rem;color:#6B7280;margin-bottom:4px'>APY (%) — 2023.01~</div>", unsafe_allow_html=True)
                 st.line_chart(_df_apy, height=220, use_container_width=True)
             with ch2:
-                st.markdown("<div style='font-size:.8rem;color:#6B7280;margin-bottom:4px'>TVL ($M) — 1년</div>", unsafe_allow_html=True)
+                st.markdown("<div style='font-size:.8rem;color:#6B7280;margin-bottom:4px'>TVL ($M) — 2023.01~</div>", unsafe_allow_html=True)
                 st.line_chart(_df_tvl, height=220, use_container_width=True)
 
         st.markdown("<br>", unsafe_allow_html=True)
