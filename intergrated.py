@@ -1708,13 +1708,6 @@ def _fmt_usd(n):
     return f"${n:,.0f}"
 
 
-def _apy_cell(c, row):
-    clr = "#10B981" if c == "APY(%)" else "#374151"
-    fw  = "700"    if c == "APY(%)" else "400"
-    val = _fmt_usd(row[c]) if c == "TVL($)" else row.get(c, "")
-    return (f"<td style='padding:6px 10px;border-bottom:1px solid #F3F4F6;"
-            f"font-size:.82rem;color:{clr};font-weight:{fw}'>{val}</td>")
-
 
 _SVG_COPY = (
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" '
@@ -2595,22 +2588,116 @@ if is_usdt_apy:
 
         st.markdown("<br>", unsafe_allow_html=True)
         st.markdown("#### 💹 USDT 풀 APY 전체 순위")
+        _sort_cols = {"APY(%)", "APR(%)", "Base APY(%)", "Reward APY(%)", "TVL($)"}
         _cols = ["프로토콜", "체인", "풀메타", "APY(%)", "APR(%)", "Base APY(%)", "Reward APY(%)", "TVL($)"]
-        _rows_html = "".join(
-            f"<tr><td style='padding:6px 10px;border-bottom:1px solid #F3F4F6;font-size:.82rem;font-weight:600;color:#111827'>{i+1}</td>"
-            + "".join(_apy_cell(c, row) for c in _cols) + "</tr>"
-            for i, row in enumerate(_ud)
-        )
-        _hdrs_html = "<th style='padding:6px 10px;background:#F9FAFB;font-size:.78rem;color:#6B7280;font-weight:600;border-bottom:2px solid #E5E7EB'>#</th>" + "".join(
-            f"<th style='padding:6px 10px;background:#F9FAFB;font-size:.78rem;color:#6B7280;font-weight:600;border-bottom:2px solid #E5E7EB;white-space:nowrap'>{c}</th>"
-            for c in _cols
-        )
-        st.markdown(f"""
-<div style="overflow-x:auto;border:1px solid #E5E7EB;border-radius:10px;margin-top:4px">
-<table style="width:100%;border-collapse:collapse">
-  <thead><tr>{_hdrs_html}</tr></thead>
-  <tbody>{_rows_html}</tbody>
-</table></div>""", unsafe_allow_html=True)
+        _table_rows_js = json.dumps([
+            [row.get(c, "") for c in _cols] for row in _ud
+        ])
+        _tvl_idx = _cols.index("TVL($)")
+        _tbl_height = min(44 * len(_ud) + 80, 800)
+        components.html(f"""
+<style>
+  body{{margin:0;font-family:sans-serif}}
+  .wrap{{overflow-x:auto;border:1px solid #E5E7EB;border-radius:10px}}
+  table{{width:100%;border-collapse:collapse}}
+  th{{padding:7px 10px;background:#F9FAFB;font-size:.75rem;color:#6B7280;
+      font-weight:600;border-bottom:2px solid #E5E7EB;white-space:nowrap;user-select:none}}
+  th.sortable{{cursor:pointer}}
+  th.sortable:hover{{background:#F3F4F6;color:#374151}}
+  th .arrow{{margin-left:4px;opacity:.35;font-size:.7rem}}
+  th.asc  .arrow{{opacity:1}}
+  th.desc .arrow{{opacity:1}}
+  td{{padding:6px 10px;border-bottom:1px solid #F3F4F6;font-size:.82rem;color:#374151}}
+  td.num{{color:#10B981;font-weight:700}}
+  td.idx{{font-weight:600;color:#111827}}
+  tr:last-child td{{border-bottom:none}}
+</style>
+<div class="wrap"><table id="tbl">
+<thead><tr id="hdr"></tr></thead>
+<tbody id="body"></tbody>
+</table></div>
+<script>
+var COLS = {json.dumps(_cols)};
+var SORT_COLS = {json.dumps(list(_sort_cols))};
+var TVL_IDX = {_tvl_idx};
+var rows = {_table_rows_js};
+var sortCol = -1, sortAsc = false;
+
+function fmtUsd(n) {{
+  if (n >= 1e9) return '$' + (n/1e9).toFixed(2) + 'B';
+  if (n >= 1e6) return '$' + (n/1e6).toFixed(2) + 'M';
+  if (n >= 1e3) return '$' + (n/1e3).toFixed(1) + 'K';
+  return '$' + n.toFixed(0);
+}}
+
+function render(data) {{
+  var tbody = document.getElementById('body');
+  tbody.innerHTML = '';
+  data.forEach(function(r, i) {{
+    var tr = document.createElement('tr');
+    var td0 = document.createElement('td');
+    td0.className = 'idx'; td0.textContent = i + 1;
+    tr.appendChild(td0);
+    COLS.forEach(function(col, ci) {{
+      var td = document.createElement('td');
+      var val = r[ci];
+      if (col === 'TVL($)') {{
+        td.textContent = typeof val === 'number' ? fmtUsd(val) : val;
+        if (col === 'APY(%)') td.className = 'num';
+      }} else if (col === 'APY(%)') {{
+        td.textContent = val;
+        td.className = 'num';
+      }} else {{
+        td.textContent = val;
+      }}
+      tr.appendChild(td);
+    }});
+    tbody.appendChild(tr);
+  }});
+}}
+
+function buildHeader() {{
+  var hdr = document.getElementById('hdr');
+  var th0 = document.createElement('th'); th0.textContent = '#'; hdr.appendChild(th0);
+  COLS.forEach(function(col, ci) {{
+    var th = document.createElement('th');
+    var isSortable = SORT_COLS.indexOf(col) >= 0;
+    th.id = 'th' + ci;
+    if (isSortable) {{
+      th.className = 'sortable';
+      th.innerHTML = col + '<span class="arrow">⇅</span>';
+      th.addEventListener('click', function() {{
+        var newAsc = (sortCol === ci) ? !sortAsc : false;
+        sortCol = ci; sortAsc = newAsc;
+        // update header arrows
+        COLS.forEach(function(_, k) {{
+          var t = document.getElementById('th' + k);
+          if (!t) return;
+          t.classList.remove('asc','desc');
+          t.querySelector('.arrow') && (t.querySelector('.arrow').textContent = '⇅');
+        }});
+        th.classList.add(sortAsc ? 'asc' : 'desc');
+        th.querySelector('.arrow').textContent = sortAsc ? '↑' : '↓';
+        var sorted = rows.slice().sort(function(a, b) {{
+          var av = a[ci], bv = b[ci];
+          if (typeof av === 'number' && typeof bv === 'number')
+            return sortAsc ? av - bv : bv - av;
+          return sortAsc ? String(av).localeCompare(String(bv))
+                         : String(bv).localeCompare(String(av));
+        }});
+        render(sorted);
+      }});
+    }} else {{
+      th.textContent = col;
+    }}
+    hdr.appendChild(th);
+  }});
+}}
+
+buildHeader();
+render(rows);
+</script>
+""", height=_tbl_height)
         st.caption("⚠️ APR은 APY에서 역산한 추정치(일 복리 기준). 투자 조언이 아닙니다.")
 
         # ── AI 분석 결과 ─────────────────────────────
