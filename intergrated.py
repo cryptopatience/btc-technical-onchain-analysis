@@ -7,8 +7,10 @@ import datetime
 import json
 import os
 import re
+import time
 from email.utils import parsedate_to_datetime
 
+import pandas as pd
 import requests
 import streamlit as st
 import streamlit.components.v1 as components
@@ -635,8 +637,27 @@ SENTIMENT_BTC=극단적공포|공포|중립|탐욕|극단적탐욕 SENTIMENT_STO
 
 
 # ── AI 요약 ────────────────────────────────────────
+def _gemini_generate(client, types, contents, **kw) -> str:
+    """503 재시도 포함 Gemini 단일 호출. 공통 retry 헬퍼."""
+    def _ex(r):
+        if r.text is not None: return r.text
+        try: return r.candidates[0].content.parts[0].text or ""
+        except Exception: return ""
+    for attempt, delay in enumerate([10, 20, 40, None], 1):
+        try:
+            return _ex(client.models.generate_content(
+                model="gemini-2.5-pro",
+                contents=contents,
+                config=types.GenerateContentConfig(**kw)))
+        except Exception as e:
+            if delay is None or ("503" not in str(e) and "UNAVAILABLE" not in str(e)):
+                raise
+            st.info(f"Gemini 503 — {delay}초 후 재시도 ({attempt}/3)...")
+            time.sleep(delay)
+    return ""
+
+
 def summarize_gemini(news_list, api_key, prompt_quick, prompt_deep):
-    import time
     try:
         from google import genai
         from google.genai import types
@@ -645,33 +666,17 @@ def summarize_gemini(news_list, api_key, prompt_quick, prompt_deep):
         return "", ""
     client = genai.Client(api_key=api_key)
     content = build_news_text(news_list, 60)
-    def _ex(r):
-        if r.text is not None: return r.text
-        try: return r.candidates[0].content.parts[0].text or ""
-        except Exception: return ""
-    def _call(prompt, **kw):
-        delays = [10, 20, 40]
-        for attempt, delay in enumerate(delays + [None], 1):
-            try:
-                return _ex(client.models.generate_content(
-                    model="gemini-2.5-pro",
-                    contents=prompt,
-                    config=types.GenerateContentConfig(**kw)))
-            except Exception as e:
-                if delay is None or "503" not in str(e) and "UNAVAILABLE" not in str(e):
-                    raise
-                st.info(f"Gemini 503 — {delay}초 후 재시도 ({attempt}/3)...")
-                time.sleep(delay)
-        return ""
     q, d = "", ""
     try:
-        q = _call(prompt_quick.format(date=TODAY_STR, content=content),
-                  temperature=0.4, max_output_tokens=8000)
+        q = _gemini_generate(client, types,
+                             prompt_quick.format(date=TODAY_STR, content=content),
+                             temperature=0.4, max_output_tokens=8000)
     except Exception as e:
         st.warning(f"Gemini Quick 오류: {e}")
     try:
-        d = _call(prompt_deep.format(date=TODAY_STR, content=content),
-                  temperature=0.35, max_output_tokens=16000)
+        d = _gemini_generate(client, types,
+                             prompt_deep.format(date=TODAY_STR, content=content),
+                             temperature=0.35, max_output_tokens=16000)
     except Exception as e:
         st.warning(f"Gemini Deep 오류: {e}")
     return q, d
@@ -745,22 +750,13 @@ def summarize_combined_gemini(deep_dives: dict, api_key: str) -> str:
     )
     if not sections:
         return ""
-    import time
     client = genai.Client(api_key=api_key)
-    delays = [10, 20, 40]
-    for attempt, delay in enumerate(delays + [None], 1):
-        try:
-            r = client.models.generate_content(
-                model="gemini-2.5-pro",
-                contents=PROMPT_COMBINED.format(date=TODAY_STR, sections=sections),
-                config=types.GenerateContentConfig(temperature=0.35, max_output_tokens=16000))
-            return r.text if r.text is not None else r.candidates[0].content.parts[0].text or ""
-        except Exception as e:
-            if delay is None or "503" not in str(e) and "UNAVAILABLE" not in str(e):
-                return f"[Gemini 오류: {e}]"
-            st.info(f"Gemini 503 — {delay}초 후 재시도 ({attempt}/3)...")
-            time.sleep(delay)
-    return "[Gemini 오류: 재시도 초과]"
+    try:
+        return _gemini_generate(client, types,
+                                PROMPT_COMBINED.format(date=TODAY_STR, sections=sections),
+                                temperature=0.35, max_output_tokens=16000)
+    except Exception as e:
+        return f"[Gemini 오류: {e}]"
 
 
 def summarize_combined_openai(deep_dives: dict, api_key: str) -> str:
@@ -1700,6 +1696,7 @@ _SCRAPE_HEADERS = {
                   "Chrome/120.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml",
 }
+_API_HEADERS = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
 
 
 def _fmt_usd(n):
@@ -1709,6 +1706,63 @@ def _fmt_usd(n):
     if abs(n) >= 1e6:  return f"${n/1e6:,.2f}M"
     if abs(n) >= 1e3:  return f"${n/1e3:,.1f}K"
     return f"${n:,.0f}"
+
+
+def _apy_cell(c, row):
+    clr = "#10B981" if c == "APY(%)" else "#374151"
+    fw  = "700"    if c == "APY(%)" else "400"
+    val = _fmt_usd(row[c]) if c == "TVL($)" else row.get(c, "")
+    return (f"<td style='padding:6px 10px;border-bottom:1px solid #F3F4F6;"
+            f"font-size:.82rem;color:{clr};font-weight:{fw}'>{val}</td>")
+
+
+_SVG_COPY = (
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" '
+    'stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+    '<rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>'
+    '<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>'
+    '</svg>'
+)
+
+
+def _copy_btn(text: str) -> None:
+    js_str = json.dumps(text)
+    components.html(f"""
+<div style="text-align:right;margin:0;padding:0">
+  <button id="copybtn" style="background:#F9FAFB;border:1px solid #E5E7EB;border-radius:6px;
+    padding:4px 10px;cursor:pointer;color:#6B7280;font-size:13px;font-family:sans-serif;
+    display:inline-flex;align-items:center;gap:5px">
+    {_SVG_COPY}&nbsp;복사
+  </button>
+</div>
+<script>
+document.getElementById('copybtn').addEventListener('click', function() {{
+  var btn = this;
+  var txt = {js_str};
+  function done() {{
+    btn.innerHTML = '&#10003;&nbsp;복사됨';
+    btn.style.color = '#10B981'; btn.style.borderColor = '#10B981';
+    setTimeout(function() {{
+      btn.innerHTML = '{_SVG_COPY}&nbsp;복사';
+      btn.style.color = '#6B7280'; btn.style.borderColor = '#E5E7EB';
+    }}, 1500);
+  }}
+  var cb = (window.parent && window.parent.navigator && window.parent.navigator.clipboard)
+    ? window.parent.navigator.clipboard : (navigator.clipboard || null);
+  if (cb && cb.writeText) {{
+    cb.writeText(txt).then(done).catch(function() {{ fallback(txt); }});
+  }} else {{ fallback(txt); }}
+  function fallback(t) {{
+    var doc = (window.parent && window.parent.document) ? window.parent.document : document;
+    var ta = doc.createElement('textarea');
+    ta.value = t; ta.style.cssText = 'position:fixed;left:-9999px;top:-9999px;opacity:0';
+    doc.body.appendChild(ta); ta.focus(); ta.select();
+    try {{ doc.execCommand('copy'); done(); }} catch(e) {{ alert('복사 실패'); }}
+    doc.body.removeChild(ta);
+  }}
+}});
+</script>
+""", height=38)
 
 
 def fetch_btc_treasuries() -> list:
@@ -1741,7 +1795,7 @@ def fetch_btc_treasuries() -> list:
 
 def fetch_usdt_apy(min_tvl: float = 1_000_000, max_apy: float = 50, top_n: int = 50) -> tuple:
     """DefiLlama 무료 API → (USDT 상위 풀 list, aave_v3_eth_pool_id str)"""
-    _h = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
+    _h = _API_HEADERS
     try:
         resp = requests.get(DEFILLAMA_POOLS_URL, headers=_h, timeout=30)
         resp.raise_for_status()
@@ -1784,7 +1838,7 @@ def fetch_aave_v3_usdt_history(pool_id: str) -> dict:
     """DefiLlama chart API → Aave V3 Ethereum USDT 1년 APY/TVL 히스토리"""
     if not pool_id:
         return {"error": "pool_id 없음"}
-    _h = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
+    _h = _API_HEADERS
     try:
         resp = requests.get(f"https://yields.llama.fi/chart/{pool_id}", headers=_h, timeout=30)
         resp.raise_for_status()
@@ -1809,6 +1863,48 @@ def fetch_aave_v3_usdt_history(pool_id: str) -> dict:
         except Exception:
             continue
     return {"pool_id": pool_id, "history": history}
+
+
+def summarize_usdt_apy_gemini(pools: list, history: list, api_key: str) -> str:
+    """USDT APY 데이터 + Aave V3 히스토리를 Gemini로 분석."""
+    try:
+        from google import genai
+        from google.genai import types
+    except ImportError:
+        return ""
+    top_pools_text = "\n".join(
+        f"{i+1}. {p['프로토콜']} ({p['체인']}) — APY: {p['APY(%)']}%, TVL: {_fmt_usd(p['TVL($)'])}"
+        for i, p in enumerate(pools[:20])
+    )
+    aave_text = ""
+    if history:
+        cur, old = history[-1], history[0]
+        apy_chg  = cur["apy"] - old["apy"]
+        tvl_chg  = (cur["tvlUsd"] - old["tvlUsd"]) / old["tvlUsd"] * 100 if old["tvlUsd"] else 0
+        recent90 = history[-90:]
+        avg90    = sum(h["apy"] for h in recent90) / len(recent90) if recent90 else 0
+        aave_text = (
+            f"Aave V3 Ethereum USDT (2023.01~현재):\n"
+            f"- 현재 APY: {cur['apy']:.2f}%  /  TVL: {_fmt_usd(cur['tvlUsd'])}\n"
+            f"- 시작 APY: {old['apy']:.2f}%  /  TVL: {_fmt_usd(old['tvlUsd'])}\n"
+            f"- APY 변화: {apy_chg:+.2f}%p  /  TVL 변화: {tvl_chg:+.1f}%\n"
+            f"- 최근 90일 평균 APY: {avg90:.2f}%"
+        )
+    prompt = (
+        f"다음은 {TODAY_STR} 기준 USDT DeFi 수익률 현황입니다.\n\n"
+        f"## USDT 상위 풀 (APY 순)\n{top_pools_text}\n\n"
+        f"## Aave V3 Ethereum USDT 추세\n{aave_text}\n\n"
+        "위 데이터를 바탕으로 한국어로 분석해주세요:\n"
+        "1. 현재 USDT DeFi 수익률 환경 평가 (수준·분포·전통금융 대비)\n"
+        "2. Aave V3 APY/TVL 장기 추세에서 읽히는 시장 신호\n"
+        "3. 주목할 고수익 풀과 프로토콜별 리스크 요인\n"
+        "4. 투자자 관점 전략적 시사점"
+    )
+    client = genai.Client(api_key=api_key)
+    try:
+        return _gemini_generate(client, types, prompt, temperature=0.35, max_output_tokens=8000)
+    except Exception as e:
+        return f"[Gemini 오류: {e}]"
 
 
 # ══════════════════════════════════════════════════
@@ -1866,18 +1962,16 @@ def init_session():
             fk = f"{prefix}{key}"
             if fk not in st.session_state:
                 st.session_state[fk] = [] if key=="news_data" else ({} if key=="source_stats" else "")
-    _list_keys = ("btc_treasury_data", "usdt_apy_data")
-    _dict_keys = ("usdt_apy_aave_history",)
-    for k in ("discord_last_sent", "discord_last_sent_date", "combined_last_run_at", "combined_last_run_status",
-              "btc_sentiment", "stock_sentiment",
-              "btc_treasury_data", "usdt_apy_data", "usdt_apy_aave_history"):
+    _str_keys = ("discord_last_sent","discord_last_sent_date","combined_last_run_at",
+                 "combined_last_run_status","btc_sentiment","stock_sentiment","usdt_apy_ai_summary")
+    for k in _str_keys:
         if k not in st.session_state:
-            if k in _list_keys:
-                st.session_state[k] = []
-            elif k in _dict_keys:
-                st.session_state[k] = {}
-            else:
-                st.session_state[k] = ""
+            st.session_state[k] = ""
+    for k in ("btc_treasury_data", "usdt_apy_data"):
+        if k not in st.session_state:
+            st.session_state[k] = []
+    if "usdt_apy_aave_history" not in st.session_state:
+        st.session_state["usdt_apy_aave_history"] = {}
 
 init_session()
 load_cache()
@@ -2062,6 +2156,22 @@ if auto_run_combined:
     run_combined_analysis_pipeline(use_ai, ai_providers, trigger_source="login")
     st.rerun()
 
+# ── USDT APY 자동 실행 (모드 선택 시 데이터 없으면 즉시 수집)
+if is_usdt_apy and not st.session_state.get("usdt_apy_data"):
+    with st.spinner("💵 USDT APY 데이터 수집 중..."):
+        _auto_data, _auto_pid = fetch_usdt_apy()
+    st.session_state["usdt_apy_data"] = _auto_data
+    if _auto_pid:
+        with st.spinner("📈 Aave V3 히스토리 수집 중..."):
+            _auto_hist = fetch_aave_v3_usdt_history(_auto_pid)
+        st.session_state["usdt_apy_aave_history"] = _auto_hist
+    if use_ai and GEMINI_API_KEY and "Gemini 2.5 Pro" in ai_providers:
+        _hist_list = st.session_state["usdt_apy_aave_history"].get("history", [])
+        with st.spinner("🤖 AI 분석 중..."):
+            st.session_state["usdt_apy_ai_summary"] = summarize_usdt_apy_gemini(
+                _auto_data, _hist_list, GEMINI_API_KEY)
+    st.rerun()
+
 if run_btn:
     all_raw, source_map = [], {}
 
@@ -2115,10 +2225,16 @@ if run_btn:
                 top_n=_top_n_v,
             )
         st.session_state["usdt_apy_data"] = _data
+        st.session_state["usdt_apy_ai_summary"] = ""  # 재수집 시 AI 결과 초기화
         if _aave_pid:
-            with st.spinner("📈 Aave V3 USDT 1년 히스토리 수집 중..."):
+            with st.spinner("📈 Aave V3 히스토리 수집 중..."):
                 _hist = fetch_aave_v3_usdt_history(_aave_pid)
             st.session_state["usdt_apy_aave_history"] = _hist
+        if use_ai and GEMINI_API_KEY and "Gemini 2.5 Pro" in ai_providers:
+            _hist_list = st.session_state["usdt_apy_aave_history"].get("history", [])
+            with st.spinner("🤖 AI 분석 중..."):
+                st.session_state["usdt_apy_ai_summary"] = summarize_usdt_apy_gemini(
+                    _data, _hist_list, GEMINI_API_KEY)
         st.rerun()
 
     elif is_combined:
@@ -2351,64 +2467,6 @@ MODE_CFG = {
 cfg    = MODE_CFG[nav_mode]
 accent = cfg["accent"]
 
-
-def _copy_btn(text: str) -> None:
-    """복사 아이콘 버튼(네모 두 개 겹친 형태)을 분석 결과 우측 상단에 렌더링."""
-    js_str = json.dumps(text)
-    svg_copy = (
-        '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" '
-        'stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
-        '<rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>'
-        '<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>'
-        '</svg>'
-    )
-    components.html(f"""
-<div style="text-align:right;margin:0;padding:0">
-  <button id="copybtn" style="background:#F9FAFB;border:1px solid #E5E7EB;border-radius:6px;
-    padding:4px 10px;cursor:pointer;color:#6B7280;font-size:13px;font-family:sans-serif;
-    display:inline-flex;align-items:center;gap:5px">
-    {svg_copy}&nbsp;복사
-  </button>
-</div>
-<script>
-document.getElementById('copybtn').addEventListener('click', function() {{
-  var btn = this;
-  var txt = {js_str};
-  function done() {{
-    btn.innerHTML = '&#10003;&nbsp;복사됨';
-    btn.style.color = '#10B981';
-    btn.style.borderColor = '#10B981';
-    setTimeout(function() {{
-      btn.innerHTML = '{svg_copy}&nbsp;복사';
-      btn.style.color = '#6B7280';
-      btn.style.borderColor = '#E5E7EB';
-    }}, 1500);
-  }}
-  /* iframe 안에서는 parent window의 clipboard를 우선 사용 */
-  var cb = (window.parent && window.parent.navigator && window.parent.navigator.clipboard)
-    ? window.parent.navigator.clipboard
-    : (navigator.clipboard || null);
-  if (cb && cb.writeText) {{
-    cb.writeText(txt).then(done).catch(function() {{ fallback(txt); }});
-  }} else {{
-    fallback(txt);
-  }}
-  function fallback(t) {{
-    /* parent document에 textarea를 붙여 execCommand 실행 */
-    var doc = (window.parent && window.parent.document) ? window.parent.document : document;
-    var ta = doc.createElement('textarea');
-    ta.value = t;
-    ta.style.cssText = 'position:fixed;left:-9999px;top:-9999px;opacity:0';
-    doc.body.appendChild(ta);
-    ta.focus(); ta.select();
-    try {{ doc.execCommand('copy'); done(); }} catch(e) {{ alert('복사 실패: 텍스트를 직접 선택해 주세요.'); }}
-    doc.body.removeChild(ta);
-  }}
-}});
-</script>
-""", height=38)
-
-
 # ── 상단 탑바
 tab_html = "".join(
     f'<div class="cq-mode-tab {"active" if k==nav_mode else ""}">{v["icon"]} {v["title"].split(" ",1)[1] if " " in v["title"] else v["title"]}</div>'
@@ -2534,12 +2592,6 @@ if is_usdt_apy:
         st.markdown("<br>", unsafe_allow_html=True)
         st.markdown("#### 💹 USDT 풀 APY 전체 순위")
         _cols = ["프로토콜", "체인", "풀메타", "APY(%)", "APR(%)", "Base APY(%)", "Reward APY(%)", "TVL($)"]
-        def _apy_cell(c, row):
-            clr = "#10B981" if c == "APY(%)" else "#374151"
-            fw  = "700"    if c == "APY(%)" else "400"
-            val = _fmt_usd(row[c]) if c == "TVL($)" else row.get(c, "")
-            return (f"<td style='padding:6px 10px;border-bottom:1px solid #F3F4F6;"
-                    f"font-size:.82rem;color:{clr};font-weight:{fw}'>{val}</td>")
         _rows_html = "".join(
             f"<tr><td style='padding:6px 10px;border-bottom:1px solid #F3F4F6;font-size:.82rem;font-weight:600;color:#111827'>{i+1}</td>"
             + "".join(_apy_cell(c, row) for c in _cols) + "</tr>"
@@ -2556,6 +2608,21 @@ if is_usdt_apy:
   <tbody>{_rows_html}</tbody>
 </table></div>""", unsafe_allow_html=True)
         st.caption("⚠️ APR은 APY에서 역산한 추정치(일 복리 기준). 투자 조언이 아닙니다.")
+
+        # ── AI 분석 결과 ─────────────────────────────
+        _ai_sum = st.session_state.get("usdt_apy_ai_summary", "")
+        if _ai_sum:
+            st.markdown("---")
+            st.markdown("#### 🤖 AI 분석 리포트")
+            _copy_btn(_ai_sum)
+            st.markdown(_ai_sum)
+        elif use_ai and GEMINI_API_KEY and "Gemini 2.5 Pro" in ai_providers:
+            if st.button("🤖 AI 분석 실행", key="usdt_ai_btn"):
+                _hist_list = st.session_state.get("usdt_apy_aave_history", {}).get("history", [])
+                with st.spinner("🤖 AI 분석 중..."):
+                    st.session_state["usdt_apy_ai_summary"] = summarize_usdt_apy_gemini(
+                        _ud, _hist_list, GEMINI_API_KEY)
+                st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
     st.stop()
 
