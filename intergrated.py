@@ -4,12 +4,14 @@
 """
 
 import datetime
+import json
 import os
 import re
 from email.utils import parsedate_to_datetime
 
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
@@ -2157,6 +2159,58 @@ MODE_CFG = {
 cfg    = MODE_CFG[nav_mode]
 accent = cfg["accent"]
 
+
+def _copy_btn(text: str) -> None:
+    """복사 아이콘 버튼(네모 두 개 겹친 형태)을 분석 결과 우측 상단에 렌더링."""
+    js_str = json.dumps(text)
+    svg_copy = (
+        '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" '
+        'stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+        '<rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>'
+        '<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>'
+        '</svg>'
+    )
+    components.html(f"""
+<div style="text-align:right;margin:0;padding:0">
+  <button id="copybtn" style="background:#F9FAFB;border:1px solid #E5E7EB;border-radius:6px;
+    padding:4px 10px;cursor:pointer;color:#6B7280;font-size:13px;font-family:sans-serif;
+    display:inline-flex;align-items:center;gap:5px">
+    {svg_copy}&nbsp;복사
+  </button>
+</div>
+<script>
+document.getElementById('copybtn').addEventListener('click', function() {{
+  var btn = this;
+  var txt = {js_str};
+  function done() {{
+    btn.innerHTML = '&#10003;&nbsp;복사됨';
+    btn.style.color = '#10B981';
+    btn.style.borderColor = '#10B981';
+    setTimeout(function() {{
+      btn.innerHTML = '{svg_copy}&nbsp;복사';
+      btn.style.color = '#6B7280';
+      btn.style.borderColor = '#E5E7EB';
+    }}, 1500);
+  }}
+  if (navigator.clipboard && navigator.clipboard.writeText) {{
+    navigator.clipboard.writeText(txt).then(done).catch(function() {{ fallback(txt); }});
+  }} else {{
+    fallback(txt);
+  }}
+  function fallback(t) {{
+    var ta = document.createElement('textarea');
+    ta.value = t;
+    ta.style.cssText = 'position:fixed;left:-9999px;top:-9999px';
+    document.body.appendChild(ta);
+    ta.focus(); ta.select();
+    try {{ document.execCommand('copy'); done(); }} catch(e) {{}}
+    document.body.removeChild(ta);
+  }}
+}});
+</script>
+""", height=38)
+
+
 # ── 상단 탑바
 tab_html = "".join(
     f'<div class="cq-mode-tab {"active" if k==nav_mode else ""}">{v["icon"]} {v["title"].split(" ",1)[1] if " " in v["title"] else v["title"]}</div>'
@@ -2242,6 +2296,7 @@ if is_combined:
             <div class="cq-ai-provider">{_pv} · {TODAY_STR} KST</div>
           </div>
         </div>""", unsafe_allow_html=True)
+        _copy_btn(_cs)
         st.markdown(_cs)
     st.markdown("</div>", unsafe_allow_html=True)
     st.stop()
@@ -2339,8 +2394,14 @@ if summary_quick or summary_deep:
       </div>
     </div>""", unsafe_allow_html=True)
     t1, t2 = st.tabs(["⚡ Quick Summary", "🔬 Deep Dive"])
-    with t1: st.markdown(summary_quick or "_요약 없음_")
-    with t2: st.markdown(summary_deep  or "_분석 없음_")
+    with t1:
+        if summary_quick:
+            _copy_btn(summary_quick)
+        st.markdown(summary_quick or "_요약 없음_")
+    with t2:
+        if summary_deep:
+            _copy_btn(summary_deep)
+        st.markdown(summary_deep  or "_분석 없음_")
     st.markdown("<br>", unsafe_allow_html=True)
 
 # ── 검색 & 필터
