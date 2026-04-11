@@ -2108,12 +2108,45 @@ def summarize_usdt_apy_gemini(pools: list, history: list, api_key: str,
         tvl_chg  = (cur["tvlUsd"] - old["tvlUsd"]) / old["tvlUsd"] * 100 if old["tvlUsd"] else 0
         recent90 = history[-90:]
         avg90    = sum(h["apy"] for h in recent90) / len(recent90) if recent90 else 0
+        recent20 = history[-20:]
+        ma20     = sum(h["apy"] for h in recent20) / len(recent20) if recent20 else 0
+        recent7  = history[-7:]
+        ma7      = sum(h["apy"] for h in recent7) / len(recent7) if recent7 else 0
+        ma20_pos = "위" if cur["apy"] > ma20 else "아래"
+        ma20_gap = cur["apy"] - ma20
+        ma7_pos  = "위" if cur["apy"] > ma7 else "아래"
+        ma7_gap  = cur["apy"] - ma7
+        # 골든/데스크로스 감지
+        _cross_signal = "없음"
+        if len(history) >= 2:
+            import pandas as _pd_p
+            _apys = [h["apy"] for h in history]
+            _s7  = _pd_p.Series(_apys).rolling(7,  min_periods=1).mean()
+            _s20 = _pd_p.Series(_apys).rolling(20, min_periods=1).mean()
+            _p7, _c7   = float(_s7.iloc[-2]),  float(_s7.iloc[-1])
+            _p20, _c20 = float(_s20.iloc[-2]), float(_s20.iloc[-1])
+            if _p7 <= _p20 and _c7 > _c20:
+                _cross_signal = "골든크로스 (직전 발생)"
+            elif _p7 >= _p20 and _c7 < _c20:
+                _cross_signal = "데스크로스 (직전 발생)"
+            else:
+                for _i in range(max(1, len(_s7)-30), len(_s7)):
+                    _pp7, _cc7   = float(_s7.iloc[_i-1]),  float(_s7.iloc[_i])
+                    _pp20, _cc20 = float(_s20.iloc[_i-1]), float(_s20.iloc[_i])
+                    if _pp7 <= _pp20 and _cc7 > _cc20:
+                        _cross_signal = f"골든크로스 (최근 30일 내 발생, {history[_i]['date']})"
+                    elif _pp7 >= _pp20 and _cc7 < _cc20:
+                        _cross_signal = f"데스크로스 (최근 30일 내 발생, {history[_i]['date']})"
         aave_text = (
             f"Aave V3 Ethereum USDT (2023.01~현재):\n"
             f"- 현재 APY: {cur['apy']:.2f}%  /  TVL: {_fmt_usd(cur['tvlUsd'])}\n"
             f"- 시작 APY: {old['apy']:.2f}%  /  TVL: {_fmt_usd(old['tvlUsd'])}\n"
             f"- APY 변화: {apy_chg:+.2f}%p  /  TVL 변화: {tvl_chg:+.1f}%\n"
-            f"- 최근 90일 평균 APY: {avg90:.2f}%"
+            f"- 최근 90일 평균 APY: {avg90:.2f}%\n"
+            f"- 7일 이동평균 APY: {ma7:.2f}% (현재 APY 대비 {ma7_gap:+.2f}%p, {ma7_pos})\n"
+            f"- 20일 이동평균 APY: {ma20:.2f}% (현재 APY 대비 {ma20_gap:+.2f}%p, {ma20_pos})\n"
+            f"- MA 크로스 신호: {_cross_signal}\n"
+            f"- 7MA vs 20MA: {ma7 - ma20:+.2f}%p ({'골든크로스 구간' if ma7 > ma20 else '데스크로스 구간'})"
         )
     news_text = ""
     if news:
@@ -2132,7 +2165,14 @@ def summarize_usdt_apy_gemini(pools: list, history: list, api_key: str,
         "1. 📊 현재 USDT DeFi 수익률 환경\n"
         "   - 전체 수준·분포 평가, 전통금융(MMF·국채) 대비 매력도\n\n"
         "2. 📈 Aave V3 APY/TVL 장기 추세 해석\n"
-        "   - 주요 변곡점과 배경 요인, 현재 국면 진단\n\n"
+        "   - 주요 변곡점과 배경 요인, 현재 국면 진단\n"
+        "   - 7일 이동평균선 대비 현재 APY 위치: 단기 모멘텀 판단\n"
+        "   - 20일 이동평균선 대비 현재 APY 위치: 중기 추세 방향성 판단\n"
+        "     (이동평균 상회 시: 단기 수요 급증 신호 / 하회 시: 수요 둔화·디레버리징 신호)\n"
+        "   - 골든크로스(7MA > 20MA) / 데스크로스(7MA < 20MA) 신호 해석\n"
+        "     · 골든크로스: DeFi 수익률 상승 모멘텀 — 레버리지 수요 증가, 위험선호 강화 가능성\n"
+        "     · 데스크로스: DeFi 수익률 하락 모멘텀 — 디레버리징, 자금 이탈 또는 유동성 개선 신호\n"
+        "   - 현재 MA 크로스 구간이 BTC 가격 방향에 시사하는 바\n\n"
         "3. 🔗 USDT APY와 BTC 가격의 상관관계 심층분석\n"
         "   - BTC 강세장/약세장 국면별 USDT DeFi 수익률 패턴\n"
         "   - APY 급등·급락이 BTC 가격에 선행·동행·후행하는 메커니즘\n"
@@ -2988,15 +3028,55 @@ if is_usdt_apy:
                       delta_color="normal")
             m4.metric("2023-01 TVL", _fmt_usd(_tvl_old))
 
-            # 날짜 인덱스 DataFrame으로 1년 전체 표시
+            # 날짜 인덱스 DataFrame으로 전체 표시
             import pandas as pd
             _idx  = pd.to_datetime([h["date"] for h in _hist])
-            _df_apy = pd.DataFrame({"APY(%)": [h["apy"] for h in _hist]}, index=_idx)
+            _apy_vals = [h["apy"] for h in _hist]
+            _df_apy = pd.DataFrame({"APY(%)": _apy_vals}, index=_idx)
+            _df_apy["7일 MA"]  = _df_apy["APY(%)"].rolling(7,  min_periods=1).mean()
+            _df_apy["20일 MA"] = _df_apy["APY(%)"].rolling(20, min_periods=1).mean()
             _df_tvl = pd.DataFrame({"TVL($M)": [h["tvlUsd"] / 1e6 for h in _hist]}, index=_idx)
+
+            # 골든크로스 / 데스크로스 감지
+            _ma7  = _df_apy["7일 MA"]
+            _ma20 = _df_apy["20일 MA"]
+            _cross_type = None
+            if len(_ma7) >= 2:
+                _prev7, _cur7   = _ma7.iloc[-2],  _ma7.iloc[-1]
+                _prev20, _cur20 = _ma20.iloc[-2], _ma20.iloc[-1]
+                if _prev7 <= _prev20 and _cur7 > _cur20:
+                    _cross_type = "🟡 골든크로스"
+                elif _prev7 >= _prev20 and _cur7 < _cur20:
+                    _cross_type = "⚫ 데스크로스"
+                else:
+                    # 최근 30일 내 크로스 탐색
+                    for _i in range(max(1, len(_ma7)-30), len(_ma7)):
+                        _p7, _c7   = _ma7.iloc[_i-1], _ma7.iloc[_i]
+                        _p20, _c20 = _ma20.iloc[_i-1], _ma20.iloc[_i]
+                        if _p7 <= _p20 and _c7 > _c20:
+                            _cross_type = f"🟡 골든크로스 ({_ma7.index[_i].strftime('%m/%d')})"
+                        elif _p7 >= _p20 and _c7 < _c20:
+                            _cross_type = f"⚫ 데스크로스 ({_ma7.index[_i].strftime('%m/%d')})"
+
+            _cur_ma7  = float(_ma7.iloc[-1])
+            _cur_ma20 = float(_ma20.iloc[-1])
+            _cur_apy  = _apy_vals[-1]
+            _ma_signal = "이동평균 상회 (강세)" if _cur_ma7 > _cur_ma20 else "이동평균 하회 (약세)"
+
+            # 크로스 대시보드
+            cx1, cx2, cx3 = st.columns(3)
+            cx1.metric("7일 MA", f"{_cur_ma7:.2f}%",
+                       delta=f"현재 APY {_cur_apy - _cur_ma7:+.2f}%p")
+            cx2.metric("20일 MA", f"{_cur_ma20:.2f}%",
+                       delta=f"7MA-20MA {_cur_ma7 - _cur_ma20:+.2f}%p")
+            cx3.metric("MA 크로스 신호",
+                       _cross_type if _cross_type else "—",
+                       delta=_ma_signal,
+                       delta_color="normal")
 
             ch1, ch2 = st.columns(2)
             with ch1:
-                st.markdown("<div style='font-size:.8rem;color:#6B7280;margin-bottom:4px'>APY (%) — 2023.01~</div>", unsafe_allow_html=True)
+                st.markdown("<div style='font-size:.8rem;color:#6B7280;margin-bottom:4px'>APY (%) — 2023.01~ · 7일/20일 이동평균</div>", unsafe_allow_html=True)
                 st.line_chart(_df_apy, height=220, use_container_width=True)
             with ch2:
                 st.markdown("<div style='font-size:.8rem;color:#6B7280;margin-bottom:4px'>TVL ($M) — 2023.01~</div>", unsafe_allow_html=True)
