@@ -2805,7 +2805,6 @@ if is_treasury:
       <div class="cq-ai-header">
         <div class="cq-ai-dot" style="background:#F59E0B"></div>
         <div class="cq-ai-title">🏦 BTC Treasury — 기업 BTC 보유 현황</div>
-        <div class="cq-ai-provider">출처: bitcointreasuries.net</div>
       </div>
     </div>""", unsafe_allow_html=True)
 
