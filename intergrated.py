@@ -37,8 +37,11 @@ def get_secret(key: str) -> str:
 # ── API 키 ─────────────────────────────────────────
 FINNHUB_API_KEY     = get_secret("FINNHUB_API_KEY")
 CRYPTOPANIC_API_KEY = get_secret("CRYPTOPANIC_API_KEY")
-OPENAI_API_KEY      = get_secret("OPENAI_API_KEY")
 GEMINI_API_KEY      = get_secret("GEMINI_API_KEY")
+
+# 사용할 Gemini 모델과 화면 표시용 이름. 버전 교체는 이 두 줄만 바꾸면 된다.
+GEMINI_MODEL = "gemini-3.7-flash"
+GEMINI_LABEL = "Gemini 3.7 Flash"
 APP_PASSWORD        = get_secret("APP_PASSWORD") or "1234"
 
 # ── 비밀번호 인증 ──────────────────────────────────
@@ -73,7 +76,6 @@ if APP_PASSWORD and not st.session_state.authenticated:
         if st.button("로그인", type="primary", use_container_width=True):
             if pw == APP_PASSWORD:
                 st.session_state.authenticated = True
-                st.session_state["auto_run_combined_on_login"] = True
                 st.rerun()
             else:
                 st.error("비밀번호가 틀렸습니다.")
@@ -590,55 +592,21 @@ def render_news_row(item: dict, idx: int = 0) -> str:  # noqa: ARG001
 # ── AI 프롬프트 ────────────────────────────────────
 # ══════════════════════════════════════════════════
 PROMPT_STOCK_QUICK = """다음은 {date} (KST) 미국 주식 및 금융 시장 뉴스입니다.\n{content}\n위 뉴스만을 바탕으로 한국어 Quick Summary를 작성해주세요.\n1. **오늘의 증시 핵심 테마** (거시경제, S&P500 흐름 등 3~5가지, 각 1~2문장)\n2. **주요 기업/섹터별 이슈** (특징주 중심, 각 1문장)\n3. **한줄 시장 요약**\n가독성 좋고 간결하게 작성해주세요."""
-PROMPT_STOCK_DEEP  = """다음은 {date} (KST) 미국 증시 주요 뉴스입니다.\n{content}\n위 뉴스만을 바탕으로 한국어 Deep Dive 심층 분석을 작성해주세요.\n1. **거시 경제 및 연준(Fed) 동향 분석**\n2. **주요 기업 실적 및 펀더멘털 분석**\n3. **섹터별 자금 흐름 및 특징**\n4. **리스크 요인 및 시장의 우려**\n5. **단기 시장 전망 및 월가 시각**\n전문적인 금융 리포트 톤으로 작성해주세요."""
+PROMPT_STOCK_DEEP  = """다음은 {date} (KST) 미국 증시 주요 뉴스입니다.\n{content}\n위 뉴스만을 바탕으로 한국어 Deep Dive 심층 분석을 작성해주세요.\n1. **거시 경제 및 연준(Fed) 동향 분석**\n2. **주요 기업 실적 및 펀더멘털 분석**\n3. **섹터별 자금 흐름 및 특징**\n4. **리스크 요인 및 시장의 우려**\n5. **단기 시장 전망 및 월가 시각**\n전문적인 금융 리포트 톤으로 작성해주세요.\n\n분석 맨 마지막 줄에 반드시 아래 형식 한 줄만 추가하세요 (다른 설명 없이):\nSENTIMENT_STOCK=극단적공포|공포|중립|탐욕|극단적탐욕"""
 PROMPT_COIN_QUICK  = """다음은 {date} (KST) 기준 코인 뉴스입니다.\n{content}\n위 뉴스만 바탕으로 한국어 Quick Summary를 작성해주세요.\n1. **오늘의 핵심 이슈** (3~5개, 각 1~2문장)\n2. **코인/프로젝트별 주요 이슈**\n3. **시장 한줄 요약**"""
-PROMPT_COIN_DEEP   = """다음은 {date} (KST) 기준 코인 뉴스입니다.\n{content}\n위 뉴스만 바탕으로 한국어 Deep Dive 분석을 작성해주세요.\n1. **거시 경제 및 규제 환경 분석**\n2. **주요 코인별/섹터별 테마 분석**\n3. **기관 투자자 동향**\n4. **리스크 요인 및 주의 포인트**\n5. **단기 시장 전망 및 투자 시사점**"""
+PROMPT_COIN_DEEP   = """다음은 {date} (KST) 기준 코인 뉴스입니다.\n{content}\n위 뉴스만 바탕으로 한국어 Deep Dive 분석을 작성해주세요.\n1. **거시 경제 및 규제 환경 분석**\n2. **주요 코인별/섹터별 테마 분석**\n3. **기관 투자자 동향**\n4. **리스크 요인 및 주의 포인트**\n5. **단기 시장 전망 및 투자 시사점**\n\n분석 맨 마지막 줄에 반드시 아래 형식 한 줄만 추가하세요 (다른 설명 없이):\nSENTIMENT_BTC=극단적공포|공포|중립|탐욕|극단적탐욕"""
 PROMPT_TA_QUICK    = """다음은 {date} (KST) 기준 비트코인 기술적 분석 기사들입니다.\n{content}\n위 내용만을 바탕으로 한국어 Quick Summary를 작성해주세요.\n1. **현재 BTC 차트 핵심 구조**\n2. **주요 기술적 지표 현황** (RSI, MACD, 이평선)\n3. **단기 시나리오** (강세/약세)\n4. **한줄 차트 요약**"""
-PROMPT_TA_DEEP     = """다음은 {date} (KST) 기준 비트코인 기술적 분석 기사들입니다.\n{content}\n위 내용만을 바탕으로 한국어 Deep Dive 기술적 분석을 작성해주세요.\n1. **현재 가격 구조 분석**\n2. **오실레이터·모멘텀 지표 분석**\n3. **이동평균선 및 추세 분석**\n4. **주요 패턴 및 차트 형태**\n5. **단기/중기 가격 전망 및 핵심 레벨**"""
+PROMPT_TA_DEEP     = """다음은 {date} (KST) 기준 비트코인 기술적 분석 기사들입니다.\n{content}\n위 내용만을 바탕으로 한국어 Deep Dive 기술적 분석을 작성해주세요.\n1. **현재 가격 구조 분석**\n2. **오실레이터·모멘텀 지표 분석**\n3. **이동평균선 및 추세 분석**\n4. **주요 패턴 및 차트 형태**\n5. **단기/중기 가격 전망 및 핵심 레벨**\n\n분석 맨 마지막 줄에 반드시 아래 형식 한 줄만 추가하세요 (다른 설명 없이):\nSENTIMENT_BTC=극단적공포|공포|중립|탐욕|극단적탐욕"""
 PROMPT_OC_QUICK    = """다음은 {date} (KST) 기준 비트코인 온체인 분석 기사들입니다.\n{content}\n위 내용만을 바탕으로 한국어 Quick Summary를 작성해주세요.\n1. **핵심 온체인 시그널**\n2. **투자자 행동 분석**\n3. **파생상품 시장 현황**\n4. **한줄 온체인 요약**"""
-PROMPT_OC_DEEP     = """다음은 {date} (KST) 기준 비트코인 온체인 분석 기사들입니다.\n{content}\n위 내용만을 바탕으로 한국어 Deep Dive 온체인 분석을 작성해주세요.\n1. **밸류에이션 지표 분석** (MVRV, SOPR)\n2. **홀더 행동 분석** (LTH vs STH)\n3. **거래소 흐름 분석**\n4. **파생상품·레버리지 현황**\n5. **매크로 온체인 전망**"""
+PROMPT_OC_DEEP     = """다음은 {date} (KST) 기준 비트코인 온체인 분석 기사들입니다.\n{content}\n위 내용만을 바탕으로 한국어 Deep Dive 온체인 분석을 작성해주세요.\n1. **밸류에이션 지표 분석** (MVRV, SOPR)\n2. **홀더 행동 분석** (LTH vs STH)\n3. **거래소 흐름 분석**\n4. **파생상품·레버리지 현황**\n5. **매크로 온체인 전망**\n\n분석 맨 마지막 줄에 반드시 아래 형식 한 줄만 추가하세요 (다른 설명 없이):\nSENTIMENT_BTC=극단적공포|공포|중립|탐욕|극단적탐욕"""
 PROMPT_M7_QUICK    = """다음은 {date} (KST) 기준 Magnificent 7 관련 기사들입니다.\n{content}\n위 내용만을 바탕으로 한국어 Quick Summary를 작성해주세요.\n1. **M7 전체 시장 분위기**\n2. **종목별 핵심 이슈** (티커 명시)\n3. **기술적 주목 레벨**\n4. **단기 투자 시사점**\n5. **한줄 M7 요약**"""
-PROMPT_M7_DEEP     = """다음은 {date} (KST) 기준 Magnificent 7 관련 기사들입니다.\n{content}\n위 내용만을 바탕으로 한국어 Deep Dive 분석을 작성해주세요.\n1. **기술적 분석 종목별 현황**\n2. **펀더멘털 분석**\n3. **애널리스트 의견 종합**\n4. **섹터 및 매크로 연관성**\n5. **종목별 리스크 및 기회 요인**"""
+PROMPT_M7_DEEP     = """다음은 {date} (KST) 기준 Magnificent 7 관련 기사들입니다.\n{content}\n위 내용만을 바탕으로 한국어 Deep Dive 분석을 작성해주세요.\n1. **기술적 분석 종목별 현황**\n2. **펀더멘털 분석**\n3. **애널리스트 의견 종합**\n4. **섹터 및 매크로 연관성**\n5. **종목별 리스크 및 기회 요인**\n\n분석 맨 마지막 줄에 반드시 아래 형식 한 줄만 추가하세요 (다른 설명 없이):\nSENTIMENT_BTC=극단적공포|공포|중립|탐욕|극단적탐욕"""
 
 def _get_discord_webhook() -> str:
     return (get_secret("DISCORD_WEBHOOK_URL") or "").strip()
 
 DISCORD_WEBHOOK_URL = _get_discord_webhook()
 
-PROMPT_COMBINED = """다음은 {date} (KST) 기준 각 시장별 AI Deep Dive 분석 결과입니다.
-
-{sections}
-
-위 분석들을 종합하여 한국어로 AI 종합 분석 리포트를 작성해주세요.
-
-1. **매크로 환경 및 주요 리스크 요인**
-   - 주식 시장과 비트코인에 공통으로 영향을 미치는 매크로 요인
-   - 현재 가장 주목해야 할 리스크
-
-2. **BTC 포지셔닝 전략**
-   - 기술적 분석 + 온체인 분석을 종합한 BTC 현재 상황 평가
-   - 단기(1주일) / 중기(1개월) 전망
-
-3. **M7 및 미국 주식 전망**
-   - 주식 시장과 M7 분석을 종합한 현재 투자 환경
-   - 주목해야 할 종목 및 섹터
-
-4. **크립토 vs 전통 자산 상관관계**
-   - 비트코인과 주식 시장의 상관관계 분석
-   - 자산 배분 관점에서의 시사점
-
-5. **기관 BTC 채택 및 DeFi 수익률 환경**
-   - BTC 기업 보유 현황과 기관 채택 최신 동향
-   - USDT DeFi APY 수준이 시사하는 시장 유동성 및 리스크 선호도
-   - DeFi APY ↔ BTC 가격 상관관계에서 읽히는 신호
-
-6. **결론: 오늘의 핵심 인사이트 3가지**
-   - 가장 중요한 관찰 사항 3가지를 bullet point로 명확히 제시
-
-전문적이고 날카로운 금융 분석 리포트 톤으로 작성해주세요.
-
-리포트 본문 맨 마지막 줄에 반드시 아래 형식 한 줄을 추가하세요 (다른 설명 없이):
-SENTIMENT_BTC=극단적공포|공포|중립|탐욕|극단적탐욕 SENTIMENT_STOCK=극단적공포|공포|중립|탐욕|극단적탐욕"""
 
 
 # ── AI 요약 ────────────────────────────────────────
@@ -651,7 +619,7 @@ def _gemini_generate(client, types, contents, **kw) -> str:
     for attempt, delay in enumerate([10, 20, 40, None], 1):
         try:
             return _ex(client.models.generate_content(
-                model="gemini-2.5-pro",
+                model=GEMINI_MODEL,
                 contents=contents,
                 config=types.GenerateContentConfig(**kw)))
         except Exception as e:
@@ -687,32 +655,6 @@ def summarize_gemini(news_list, api_key, prompt_quick, prompt_deep):
     return q, d
 
 
-def summarize_openai(news_list, api_key, prompt_quick, prompt_deep):
-    try:
-        from openai import OpenAI
-    except ImportError:
-        st.error("openai 패키지가 없습니다.")
-        return "", ""
-    client = OpenAI(api_key=api_key)
-    content = build_news_text(news_list, 60)
-    q, d = "", ""
-    try:
-        q = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt_quick.format(date=TODAY_STR, content=content)}],
-            max_tokens=1500, temperature=0.4).choices[0].message.content or ""
-    except Exception as e:
-        st.warning(f"GPT Quick 오류: {e}")
-    try:
-        d = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt_deep.format(date=TODAY_STR, content=content)}],
-            max_tokens=3000, temperature=0.35).choices[0].message.content or ""
-    except Exception as e:
-        st.warning(f"GPT Deep 오류: {e}")
-    return q, d
-
-
 def send_discord(text: str, webhook_url: str = DISCORD_WEBHOOK_URL) -> bool:
     """Discord 웹훅으로 메시지 전송 (2000자 초과 시 청크 분할)"""
     if not text or not webhook_url:
@@ -736,79 +678,31 @@ def send_discord(text: str, webhook_url: str = DISCORD_WEBHOOK_URL) -> bool:
     return success
 
 
-def summarize_combined_gemini(deep_dives: dict, api_key: str) -> str:
-    try:
-        from google import genai
-        from google.genai import types
-    except ImportError:
-        return ""
-    _labels = {
-        "stock_":        "📈 미국 주식 시장 분석",
-        "coin_":         "🪙 코인 시장 분석",
-        "ta_":           "📊 BTC 기술적 분석",
-        "oc_":           "🔗 BTC 온체인 분석",
-        "m7_":           "🏆 M7 기술적 분석",
-        "btc_treasury_": "🏦 BTC Treasury (기업 보유 현황)",
-        "usdt_apy_":     "💵 USDT APY (DeFi 수익률 환경)",
-    }
-    sections = "\n\n".join(
-        f"=== {_labels[p]} ===\n{deep_dives[p][:3000]}"
-        for p in _labels if p in deep_dives and deep_dives[p]
-    )
-    if not sections:
-        return ""
-    client = genai.Client(api_key=api_key)
-    try:
-        return _gemini_generate(client, types,
-                                PROMPT_COMBINED.format(date=TODAY_STR, sections=sections),
-                                temperature=0.35, max_output_tokens=16000)
-    except Exception as e:
-        return f"[Gemini 오류: {e}]"
-
-
-def summarize_combined_openai(deep_dives: dict, api_key: str) -> str:
-    try:
-        from openai import OpenAI
-    except ImportError:
-        return ""
-    _labels = {
-        "stock_":        "📈 미국 주식 시장 분석",
-        "coin_":         "🪙 코인 시장 분석",
-        "ta_":           "📊 BTC 기술적 분석",
-        "oc_":           "🔗 BTC 온체인 분석",
-        "m7_":           "🏆 M7 기술적 분석",
-        "btc_treasury_": "🏦 BTC Treasury (기업 보유 현황)",
-        "usdt_apy_":     "💵 USDT APY (DeFi 수익률 환경)",
-    }
-    sections = "\n\n".join(
-        f"=== {_labels[p]} ===\n{deep_dives[p][:2000]}"
-        for p in _labels if p in deep_dives and deep_dives[p]
-    )
-    if not sections:
-        return ""
-    client = OpenAI(api_key=api_key)
-    try:
-        return client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": PROMPT_COMBINED.format(date=TODAY_STR, sections=sections)}],
-            max_tokens=4000, temperature=0.35).choices[0].message.content or ""
-    except Exception as e:
-        return f"[GPT 오류: {e}]"
-
-
 _SENTIMENT_LABELS = ["극단적공포", "공포", "중립", "탐욕", "극단적탐욕"]
 
 def _parse_sentiment(text: str) -> tuple[str, str]:
-    """종합분석 텍스트에서 BTC·미국주식 투자심리를 추출한다."""
+    """분석 텍스트에서 BTC·미국주식 투자심리 마커를 각각 추출한다.
+
+    마커가 없는 쪽은 빈 문자열을 돌려주므로, 한쪽 마커만 담고 있는
+    개별 모드 Deep 분석 결과에도 그대로 쓸 수 있다.
+    """
     import re
-    m = re.search(r"SENTIMENT_BTC=(\S+)\s+SENTIMENT_STOCK=(\S+)", text)
-    if m:
-        btc = m.group(1).strip()
-        stock = m.group(2).strip()
-        btc   = btc   if btc   in _SENTIMENT_LABELS else "중립"
-        stock = stock if stock in _SENTIMENT_LABELS else "중립"
-        return btc, stock
-    return "", ""
+
+    def _one(key: str) -> str:
+        m = re.search(rf"SENTIMENT_{key}=(\S+)", text or "")
+        if not m:
+            return ""
+        v = m.group(1).strip()
+        return v if v in _SENTIMENT_LABELS else "중립"
+
+    return _one("BTC"), _one("STOCK")
+
+
+def _strip_sentiment(text: str) -> str:
+    """화면 표시용으로 SENTIMENT 마커 줄을 걷어낸다."""
+    kept = [ln for ln in (text or "").splitlines()
+            if "SENTIMENT_BTC=" not in ln and "SENTIMENT_STOCK=" not in ln]
+    return "\n".join(kept).rstrip()
 
 
 def _render_dual_gauge(btc_sentiment: str, stock_sentiment: str) -> str:
@@ -924,235 +818,6 @@ def _render_dual_gauge(btc_sentiment: str, stock_sentiment: str) -> str:
 # ══════════════════════════════════════════════════
 def _now_kst_dynamic() -> datetime.datetime:
     return datetime.datetime.utcnow() + datetime.timedelta(hours=9)
-
-
-def _auto_send_combined_to_discord(combined_text: str, trigger_source: str = "manual") -> str:
-    webhook_url = _get_discord_webhook()
-    if not webhook_url:
-        st.warning("DISCORD_WEBHOOK_URL이 설정되지 않아 Discord 자동 발송을 건너뜁니다.")
-        return "success_skipped_missing_webhook"
-
-    now_kst = _now_kst_dynamic()
-    today_str = now_kst.strftime("%Y-%m-%d")
-    if st.session_state.get("discord_last_sent_date", "") == today_str:
-        st.info("오늘은 이미 Discord 발송을 완료하여 자동 발송을 건너뜁니다.")
-        return "success_skipped_daily_limit"
-
-    trigger_text = " (login auto-run)" if trigger_source == "login" else ""
-    header = (
-        f"🤖 **AI 종합분석 리포트**{trigger_text} | {today_str} KST\n"
-        f"{'-' * 40}\n\n"
-    )
-
-    if send_discord(header + combined_text, webhook_url=webhook_url):
-        st.session_state["discord_last_sent"] = now_kst.strftime("%Y-%m-%d %H:%M KST")
-        st.session_state["discord_last_sent_date"] = today_str
-        st.success("Discord 자동 발송 완료")
-        return "success_sent"
-
-    st.warning("Discord 자동 발송에 실패했습니다.")
-    return "success_send_failed"
-
-
-def run_combined_analysis_pipeline(use_ai: bool, ai_providers: list, trigger_source: str = "manual") -> bool:
-    run_started = _now_kst_dynamic()
-    st.session_state["combined_last_run_at"] = run_started.strftime("%Y-%m-%d %H:%M KST")
-    st.session_state["combined_last_run_status"] = "running"
-    save_cache()
-
-    _all_m7 = list(M7_STOCKS.keys())
-    _auto_tasks = {
-        "stock_": {
-            "label": "📈 주식 뉴스",
-            "tasks": [
-                ("Yahoo Finance", fetch_rss_feed, ["https://finance.yahoo.com/news/rssindex", "Yahoo Finance"]),
-                ("CNBC",          fetch_rss_feed, ["https://search.cnbc.com/rs/search/combinedcms/view.xml?profile=120000000", "CNBC"]),
-                ("MarketWatch",   fetch_rss_feed, ["http://feeds.marketwatch.com/marketwatch/topstories/", "MarketWatch"]),
-                ("MNI Markets",   fetch_mni_markets, []),
-                ("MKT News",      fetch_mktnews, []),
-            ] + ([("Finnhub API", fetch_finnhub, [FINNHUB_API_KEY])] if FINNHUB_API_KEY else []),
-            "pq": PROMPT_STOCK_QUICK, "pd": PROMPT_STOCK_DEEP, "filter": None,
-        },
-        "coin_": {
-            "label": "🪙 코인 뉴스",
-            "tasks": [
-                ("CoinDesk",      fetch_coindesk, []),
-                ("cryptonews.net",fetch_cryptonews_net, []),
-                ("coincarp.com",  fetch_coincarp, []),
-                ("The Block",     fetch_theblock_rss, []),
-                ("cryptonews.com",fetch_cryptonews_com, []),
-                ("Decrypt",       fetch_decrypt, []),
-            ] + ([("CryptoPanic", fetch_cryptopanic, [CRYPTOPANIC_API_KEY])] if CRYPTOPANIC_API_KEY else []),
-            "pq": PROMPT_COIN_QUICK, "pd": PROMPT_COIN_DEEP, "filter": None,
-        },
-        "ta_": {
-            "label": "📊 BTC 기술적 분석",
-            "tasks": [
-                ("CoinTelegraph", fetch_cointelegraph_ta, []),
-                ("AMBCrypto",     fetch_ambcrypto, []),
-                ("Glassnode",     fetch_glassnode_insights, []),
-                ("CryptoSlate",   fetch_cryptoslate_research, []),
-                ("Coinglass",     fetch_coinglass_news, []),
-                ("The Block",     fetch_theblock_research, []),
-                ("CoinDesk",      fetch_coindesk_analysis, []),
-                ("Reddit",        fetch_reddit_btcmarkets, []),
-            ],
-            "pq": PROMPT_TA_QUICK, "pd": PROMPT_TA_DEEP, "filter": filter_ta_news,
-        },
-        "oc_": {
-            "label": "🔗 BTC 온체인 분석",
-            "tasks": [
-                ("CoinTelegraph", fetch_cointelegraph_ta, []),
-                ("AMBCrypto",     fetch_ambcrypto, []),
-                ("Glassnode",     fetch_glassnode_insights, []),
-                ("CryptoSlate",   fetch_cryptoslate_research, []),
-                ("Coinglass",     fetch_coinglass_news, []),
-                ("The Block",     fetch_theblock_research, []),
-                ("CoinDesk",      fetch_coindesk_analysis, []),
-                ("Reddit",        fetch_reddit_btcmarkets, []),
-            ],
-            "pq": PROMPT_OC_QUICK, "pd": PROMPT_OC_DEEP, "filter": filter_onchain_news,
-        },
-        "m7_": {
-            "label": "🏆 M7 기술적 분석",
-            "tasks": [
-                ("Yahoo Finance", fetch_yahoo_finance_m7, [_all_m7]),
-                ("Benzinga",      fetch_benzinga_m7, [_all_m7]),
-                ("MarketWatch",   fetch_marketwatch_m7, []),
-                ("CNBC",          fetch_cnbc_m7, []),
-                ("SeekingAlpha",  fetch_seekingalpha_m7, [_all_m7]),
-                ("Reddit r/stocks", fetch_reddit_stocks_m7, []),
-            ] + ([("Finnhub", fetch_finnhub_m7, [FINNHUB_API_KEY, _all_m7])] if FINNHUB_API_KEY else []),
-            "pq": PROMPT_M7_QUICK, "pd": PROMPT_M7_DEEP,
-            "filter": lambda nl: filter_m7_news(nl, _all_m7),
-        },
-    }
-
-    with st.status("🤖 AI 종합분석 실행 중...", expanded=True) as _cstatus:
-        _deep_dives = {}
-
-        for _cp, _cfg in _auto_tasks.items():
-            _cl = _cfg["label"]
-            st.write(f"→ {_cl} 수집 중...")
-            _raw = []
-            for _, _tfn, _targs in _cfg["tasks"]:
-                try:
-                    _raw += _tfn(*_targs)
-                except Exception:
-                    pass
-            _raw = dedup(_raw)
-            if _cfg["filter"]:
-                _raw = _cfg["filter"](_raw)
-            _raw.sort(key=lambda x: x.get("published_at", ""), reverse=True)
-
-            if not _raw:
-                st.write(f"  - {_cl}: 수집된 뉴스 없음")
-                continue
-
-            st.write(f"  - {_cl}: {len(_raw)}건 수집, AI 분석 중...")
-            _q, _d = "", ""
-            if use_ai and ai_providers:
-                if "Gemini 2.5 Pro" in ai_providers and GEMINI_API_KEY:
-                    _q, _d = summarize_gemini(_raw, GEMINI_API_KEY, _cfg["pq"], _cfg["pd"])
-                elif "GPT-4o-mini" in ai_providers and OPENAI_API_KEY:
-                    _q, _d = summarize_openai(_raw, OPENAI_API_KEY, _cfg["pq"], _cfg["pd"])
-
-            st.session_state[f"{_cp}news_data"] = _raw
-            st.session_state[f"{_cp}summary_quick"] = _q
-            st.session_state[f"{_cp}summary_deep"] = _d
-            if _d:
-                _deep_dives[_cp] = _d
-                st.write(f"  - {_cl}: 분석 완료")
-            else:
-                st.write(f"  - {_cl}: 분석 결과 없음 (API 키 확인)")
-
-        # ── BTC Treasury 수집 및 분석
-        st.write("→ 🏦 BTC Treasury 수집 중...")
-        _td = fetch_btc_treasuries()
-        st.session_state["btc_treasury_data"] = _td
-        _tnews = []
-        try:
-            _tnews = fetch_btc_treasury_news()
-            st.session_state["btc_treasury_news_data"] = _tnews
-        except Exception:
-            pass
-        if use_ai and "Gemini 2.5 Pro" in ai_providers and GEMINI_API_KEY:
-            if not any(r.get("_error") for r in _td):
-                st.write("  - 🏦 BTC Treasury: AI 분석 중...")
-                _ta = summarize_btc_treasury_gemini(_td, _tnews, GEMINI_API_KEY)
-                st.session_state["btc_treasury_ai_summary"] = _ta
-                if _ta:
-                    _deep_dives["btc_treasury_"] = _ta
-                    st.write("  - 🏦 BTC Treasury: 분석 완료")
-
-        # ── USDT APY 수집 및 분석
-        st.write("→ 💵 USDT APY 수집 중...")
-        _usdt_data, _aave_pid = fetch_usdt_apy()
-        st.session_state["usdt_apy_data"] = _usdt_data
-        _hist = {}
-        if _aave_pid:
-            try:
-                _hist = fetch_aave_v3_usdt_history(_aave_pid)
-                st.session_state["usdt_apy_aave_history"] = _hist
-            except Exception:
-                pass
-        _unews = []
-        try:
-            _unews = fetch_usdt_apy_news()
-            st.session_state["usdt_apy_news_data"] = _unews
-        except Exception:
-            pass
-        if use_ai and "Gemini 2.5 Pro" in ai_providers and GEMINI_API_KEY:
-            if not any(r.get("_error") for r in _usdt_data):
-                st.write("  - 💵 USDT APY: AI 분석 중...")
-                _ua = summarize_usdt_apy_gemini(
-                    _usdt_data, _hist.get("history", []), GEMINI_API_KEY, _unews)
-                st.session_state["usdt_apy_ai_summary"] = _ua
-                if _ua:
-                    _deep_dives["usdt_apy_"] = _ua
-                    st.write("  - 💵 USDT APY: 분석 완료")
-
-        if not _deep_dives:
-            st.session_state["combined_last_run_status"] = "failed_no_analysis"
-            st.session_state["combined_summary_deep"] = ""
-            st.session_state["combined_provider"] = ""
-            st.error("모든 모드에서 분석 생성에 실패했습니다. API 키를 확인하세요.")
-            _cstatus.update(label="❌ 종합분석 실패", state="error")
-            save_cache()
-            return False
-
-        _combined_result, _used_prov = "", ""
-        if use_ai and ai_providers:
-            if "Gemini 2.5 Pro" in ai_providers and GEMINI_API_KEY:
-                st.write("🤖 Gemini 2.5 Pro 종합분석 생성 중...")
-                _combined_result = summarize_combined_gemini(_deep_dives, GEMINI_API_KEY)
-                _used_prov = "Gemini 2.5 Pro"
-            elif "GPT-4o-mini" in ai_providers and OPENAI_API_KEY:
-                st.write("🤖 GPT-4o-mini 종합분석 생성 중...")
-                _combined_result = summarize_combined_openai(_deep_dives, OPENAI_API_KEY)
-                _used_prov = "GPT-4o-mini"
-            else:
-                st.write("⚠️ AI API key is not configured.")
-
-        st.session_state["combined_summary_deep"] = _combined_result
-        st.session_state["combined_provider"] = _used_prov
-        _btc_s, _stock_s = _parse_sentiment(_combined_result)
-        st.session_state["btc_sentiment"] = _btc_s
-        st.session_state["stock_sentiment"] = _stock_s
-
-        if not _combined_result:
-            st.session_state["combined_last_run_status"] = "failed_combined_generation"
-            st.error("종합분석 생성에 실패했습니다.")
-            _cstatus.update(label="❌ 종합분석 실패", state="error")
-            save_cache()
-            return False
-
-        send_status = _auto_send_combined_to_discord(_combined_result, trigger_source=trigger_source)
-        st.session_state["combined_last_run_status"] = send_status
-        st.session_state["combined_last_run_at"] = _now_kst_dynamic().strftime("%Y-%m-%d %H:%M KST")
-        _cstatus.update(label="✅ 종합분석 완료!", state="complete")
-        save_cache()
-        return True
 
 
 def fetch_finnhub(api_key: str) -> list:
@@ -2221,16 +1886,10 @@ def save_cache():
     try:
         import json
         keys_to_save = []
-        for pfx in ("stock_","coin_","ta_","oc_","m7_","combined_"):
+        for pfx in ("stock_","coin_","ta_","oc_","m7_"):
             for k in ("news_data","source_stats","summary_quick","summary_deep","provider"):
                 keys_to_save.append(f"{pfx}{k}")
         keys_to_save += [
-            "combined_summary_deep",
-            "combined_provider",
-            "discord_last_sent",
-            "discord_last_sent_date",
-            "combined_last_run_at",
-            "combined_last_run_status",
             "btc_sentiment",
             "stock_sentiment",
             "btc_treasury_snapshot",   # {date, data} 이전 보유량 스냅샷
@@ -2244,13 +1903,12 @@ def save_cache():
 
 
 def init_session():
-    for prefix in ("stock_","coin_","ta_","oc_","m7_","combined_","btc_treasury_","usdt_apy_"):
+    for prefix in ("stock_","coin_","ta_","oc_","m7_","btc_treasury_","usdt_apy_"):
         for key in ("news_data","source_stats","summary_quick","summary_deep","provider"):
             fk = f"{prefix}{key}"
             if fk not in st.session_state:
                 st.session_state[fk] = [] if key=="news_data" else ({} if key=="source_stats" else "")
-    _str_keys = ("discord_last_sent","discord_last_sent_date","combined_last_run_at",
-                 "combined_last_run_status","btc_sentiment","stock_sentiment",
+    _str_keys = ("btc_sentiment","stock_sentiment",
                  "usdt_apy_ai_summary","btc_treasury_ai_summary")
     for k in _str_keys:
         if k not in st.session_state:
@@ -2267,11 +1925,6 @@ def init_session():
 
 init_session()
 load_cache()
-# 캐시에서 복원된 종합분석 텍스트가 있으면 심리를 재파싱
-if not st.session_state.get("btc_sentiment") and st.session_state.get("combined_summary_deep"):
-    _r_btc, _r_stock = _parse_sentiment(st.session_state["combined_summary_deep"])
-    st.session_state["btc_sentiment"]   = _r_btc
-    st.session_state["stock_sentiment"] = _r_stock
 
 
 # ══════════════════════════════════════════════════
@@ -2295,7 +1948,6 @@ with st.sidebar:
         "🏆  미국주식 기술적 분석",
         "🏦  BTC Treasury",
         "💵  USDT APY",
-        "🤖  AI 종합분석",
     ], label_visibility="collapsed")
 
     nav_mode = {
@@ -2306,7 +1958,6 @@ with st.sidebar:
         "🏆  미국주식 기술적 분석": "m7",
         "🏦  BTC Treasury":        "btc_treasury",
         "💵  USDT APY":            "usdt_apy",
-        "🤖  AI 종합분석":         "combined",
     }[mode_label]
 
     is_stock       = nav_mode == "stock"
@@ -2316,7 +1967,6 @@ with st.sidebar:
     is_m7          = nav_mode == "m7"
     is_treasury    = nav_mode == "btc_treasury"
     is_usdt_apy    = nav_mode == "usdt_apy"
-    is_combined    = nav_mode == "combined"
 
     st.markdown('<div class="cq-divider"></div>', unsafe_allow_html=True)
 
@@ -2324,9 +1974,8 @@ with st.sidebar:
     st.markdown("### AI 설정")
     use_ai = st.toggle("AI 요약 생성", value=True)
     if use_ai:
-        ai_opts = ["Gemini 2.5 Pro", "GPT-4o-mini"]
-        ai_provider = st.selectbox("AI 제공자", ai_opts)
-        ai_providers = [ai_provider]
+        st.caption(f"분석 모델: {GEMINI_LABEL}")
+        ai_providers = [GEMINI_LABEL]
     else:
         ai_providers = []
 
@@ -2381,13 +2030,6 @@ with st.sidebar:
         _top_n_v   = st.slider("상위 N개", 10, 100, 50)
         run_label = "USDT APY 조회"
 
-    elif is_combined:
-        st.markdown("**수집 대상 (자동)**")
-        for _cl in ["📈 주식 뉴스", "🪙 코인 뉴스", "📊 BTC 기술적 분석",
-                    "🔗 BTC 온체인 분석", "🏆 M7 기술적 분석",
-                    "🏦 BTC Treasury", "💵 USDT APY"]:
-            st.checkbox(_cl, value=True, disabled=True, key=f"_combined_chk_{_cl}")
-        run_label = "AI 종합분석 실행"
 
     else:
         st.markdown("**종목 선택**")
@@ -2446,12 +2088,6 @@ with st.sidebar:
 # ══════════════════════════════════════════════════
 # ── 수집 실행 ──────────────────────────────────────
 # ══════════════════════════════════════════════════
-auto_run_combined = bool(st.session_state.pop("auto_run_combined_on_login", False))
-if auto_run_combined:
-    st.info("로그인 후 AI 종합분석 자동 실행 중입니다.")
-    run_combined_analysis_pipeline(use_ai, ai_providers, trigger_source="login")
-    st.rerun()
-
 if run_btn:
     all_raw, source_map = [], {}
 
@@ -2559,7 +2195,7 @@ if run_btn:
             with st.spinner("📰 BTC Treasury 뉴스 수집 중..."):
                 _tnews = fetch_btc_treasury_news()
             st.session_state["btc_treasury_news_data"] = _tnews
-        if use_ai and GEMINI_API_KEY and "Gemini 2.5 Pro" in ai_providers:
+        if use_ai and GEMINI_API_KEY and GEMINI_LABEL in ai_providers:
             with st.spinner("🤖 AI 분석 중..."):
                 st.session_state["btc_treasury_ai_summary"] = summarize_btc_treasury_gemini(
                     _td, st.session_state["btc_treasury_news_data"], GEMINI_API_KEY)
@@ -2582,155 +2218,12 @@ if run_btn:
         with st.spinner("📰 USDT/DeFi 뉴스 수집 중..."):
             _usdt_news = fetch_usdt_apy_news()
         st.session_state["usdt_apy_news_data"] = _usdt_news
-        if use_ai and GEMINI_API_KEY and "Gemini 2.5 Pro" in ai_providers:
+        if use_ai and GEMINI_API_KEY and GEMINI_LABEL in ai_providers:
             _hist_list = st.session_state["usdt_apy_aave_history"].get("history", [])
             with st.spinner("🤖 AI 분석 중..."):
                 st.session_state["usdt_apy_ai_summary"] = summarize_usdt_apy_gemini(
                     _data, _hist_list, GEMINI_API_KEY,
                     st.session_state["usdt_apy_news_data"])
-        st.rerun()
-
-    elif is_combined:
-        run_combined_analysis_pipeline(use_ai, ai_providers, trigger_source="manual")
-        st.rerun()
-
-        # 모드별 기본 수집 설정 (combined 실행 시 자동 수집)
-        _all_m7 = list(M7_STOCKS.keys())
-        _auto_tasks = {
-            "stock_": {
-                "label": "📈 주식 뉴스",
-                "tasks": [
-                    ("Yahoo Finance", fetch_rss_feed, ["https://finance.yahoo.com/news/rssindex", "Yahoo Finance"]),
-                    ("CNBC",          fetch_rss_feed, ["https://search.cnbc.com/rs/search/combinedcms/view.xml?profile=120000000", "CNBC"]),
-                    ("MarketWatch",   fetch_rss_feed, ["http://feeds.marketwatch.com/marketwatch/topstories/", "MarketWatch"]),
-                    ("MNI Markets",   fetch_mni_markets, []),
-                    ("MKT News",      fetch_mktnews, []),
-                ] + ([("Finnhub API", fetch_finnhub, [FINNHUB_API_KEY])] if FINNHUB_API_KEY else []),
-                "pq": PROMPT_STOCK_QUICK, "pd": PROMPT_STOCK_DEEP, "filter": None,
-            },
-            "coin_": {
-                "label": "🪙 코인 뉴스",
-                "tasks": [
-                    ("CoinDesk",      fetch_coindesk, []),
-                    ("cryptonews.net",fetch_cryptonews_net, []),
-                    ("coincarp.com",  fetch_coincarp, []),
-                    ("The Block",     fetch_theblock_rss, []),
-                    ("cryptonews.com",fetch_cryptonews_com, []),
-                    ("Decrypt",       fetch_decrypt, []),
-                ] + ([("CryptoPanic", fetch_cryptopanic, [CRYPTOPANIC_API_KEY])] if CRYPTOPANIC_API_KEY else []),
-                "pq": PROMPT_COIN_QUICK, "pd": PROMPT_COIN_DEEP, "filter": None,
-            },
-            "ta_": {
-                "label": "📊 BTC 기술적 분석",
-                "tasks": [
-                    ("CoinTelegraph", fetch_cointelegraph_ta, []),
-                    ("AMBCrypto",     fetch_ambcrypto, []),
-                    ("Glassnode",     fetch_glassnode_insights, []),
-                    ("CryptoSlate",   fetch_cryptoslate_research, []),
-                    ("Coinglass",     fetch_coinglass_news, []),
-                    ("The Block",     fetch_theblock_research, []),
-                    ("CoinDesk",      fetch_coindesk_analysis, []),
-                    ("Reddit",        fetch_reddit_btcmarkets, []),
-                ],
-                "pq": PROMPT_TA_QUICK, "pd": PROMPT_TA_DEEP, "filter": filter_ta_news,
-            },
-            "oc_": {
-                "label": "🔗 BTC 온체인 분석",
-                "tasks": [
-                    ("CoinTelegraph", fetch_cointelegraph_ta, []),
-                    ("AMBCrypto",     fetch_ambcrypto, []),
-                    ("Glassnode",     fetch_glassnode_insights, []),
-                    ("CryptoSlate",   fetch_cryptoslate_research, []),
-                    ("Coinglass",     fetch_coinglass_news, []),
-                    ("The Block",     fetch_theblock_research, []),
-                    ("CoinDesk",      fetch_coindesk_analysis, []),
-                    ("Reddit",        fetch_reddit_btcmarkets, []),
-                ],
-                "pq": PROMPT_OC_QUICK, "pd": PROMPT_OC_DEEP, "filter": filter_onchain_news,
-            },
-            "m7_": {
-                "label": "🏆 M7 기술적 분석",
-                "tasks": [
-                    ("Yahoo Finance", fetch_yahoo_finance_m7, [_all_m7]),
-                    ("Benzinga",      fetch_benzinga_m7, [_all_m7]),
-                    ("MarketWatch",   fetch_marketwatch_m7, []),
-                    ("CNBC",          fetch_cnbc_m7, []),
-                    ("SeekingAlpha",  fetch_seekingalpha_m7, [_all_m7]),
-                    ("Reddit r/stocks", fetch_reddit_stocks_m7, []),
-                ] + ([("Finnhub", fetch_finnhub_m7, [FINNHUB_API_KEY, _all_m7])] if FINNHUB_API_KEY else []),
-                "pq": PROMPT_M7_QUICK, "pd": PROMPT_M7_DEEP,
-                "filter": lambda nl: filter_m7_news(nl, _all_m7),
-            },
-        }
-
-        with st.status("🤖 AI 종합분석 실행 중...", expanded=True) as _cstatus:
-            _deep_dives = {}
-
-            for _cp, _cfg in _auto_tasks.items():
-                _cl = _cfg["label"]
-                _existing = st.session_state.get(f"{_cp}summary_deep", "")
-                if _existing:
-                    _deep_dives[_cp] = _existing
-                    st.write(f"✅ {_cl}: 기존 분석 사용")
-                    continue
-
-                # 기존 데이터 없으면 자동 수집
-                st.write(f"📡 {_cl} 수집 중...")
-                _raw = []
-                for _, _tfn, _targs in _cfg["tasks"]:
-                    try:
-                        _raw += _tfn(*_targs)
-                    except Exception:
-                        pass
-                _raw = dedup(_raw)
-                if _cfg["filter"]:
-                    _raw = _cfg["filter"](_raw)
-                _raw.sort(key=lambda x: x.get("published_at", ""), reverse=True)
-
-                if not _raw:
-                    st.write(f"  ⚠️ {_cl}: 수집된 기사 없음")
-                    continue
-
-                st.write(f"  → {len(_raw)}건 수집. AI 분석 중...")
-                _q, _d = "", ""
-                if use_ai and ai_providers:
-                    if "Gemini 2.5 Pro" in ai_providers and GEMINI_API_KEY:
-                        _q, _d = summarize_gemini(_raw, GEMINI_API_KEY, _cfg["pq"], _cfg["pd"])
-                    elif "GPT-4o-mini" in ai_providers and OPENAI_API_KEY:
-                        _q, _d = summarize_openai(_raw, OPENAI_API_KEY, _cfg["pq"], _cfg["pd"])
-
-                st.session_state[f"{_cp}news_data"]     = _raw
-                st.session_state[f"{_cp}summary_quick"] = _q
-                st.session_state[f"{_cp}summary_deep"]  = _d
-                if _d:
-                    _deep_dives[_cp] = _d
-                    st.write(f"  ✅ {_cl}: 분석 완료")
-                else:
-                    st.write(f"  ⚠️ {_cl}: AI 분석 없음 (API 키 확인)")
-
-            if not _deep_dives:
-                st.error("모든 모드에서 분석 생성 실패. API 키를 확인하세요.")
-                _cstatus.update(label="❌ 실패", state="error")
-            else:
-                _combined_result, _used_prov = "", ""
-                if use_ai and ai_providers:
-                    if "Gemini 2.5 Pro" in ai_providers and GEMINI_API_KEY:
-                        st.write("🤖 Gemini 2.5 Pro 종합분석 생성 중...")
-                        _combined_result = summarize_combined_gemini(_deep_dives, GEMINI_API_KEY)
-                        _used_prov = "Gemini 2.5 Pro"
-                    elif "GPT-4o-mini" in ai_providers and OPENAI_API_KEY:
-                        st.write("🤖 GPT-4o-mini 종합분석 생성 중...")
-                        _combined_result = summarize_combined_openai(_deep_dives, OPENAI_API_KEY)
-                        _used_prov = "GPT-4o-mini"
-                    else:
-                        st.write("⚠️ AI API 키가 없습니다.")
-                st.session_state["combined_summary_deep"] = _combined_result
-                st.session_state["combined_provider"]     = _used_prov
-                _btc_s2, _stock_s2 = _parse_sentiment(_combined_result)
-                st.session_state["btc_sentiment"]   = _btc_s2
-                st.session_state["stock_sentiment"] = _stock_s2
-                _cstatus.update(label="✅ 종합분석 완료!", state="complete")
-                save_cache()
         st.rerun()
 
     else:
@@ -2773,21 +2266,25 @@ if run_btn:
 
         if use_ai and filtered and ai_providers:
             all_quick, all_deep, used = [], [], []
-            if "Gemini 2.5 Pro" in ai_providers and GEMINI_API_KEY:
-                st.write("🤖 Gemini 2.5 Pro 분석 중...")
+            if GEMINI_LABEL in ai_providers and GEMINI_API_KEY:
+                st.write(f"🤖 {GEMINI_LABEL} 분석 중...")
                 q, d = summarize_gemini(filtered, GEMINI_API_KEY, pq, pd_)
-                if q: all_quick.append(f"### 🔵 Gemini 2.5 Pro\n{q}")
-                if d: all_deep.append(f"### 🔵 Gemini 2.5 Pro\n{d}")
-                used.append("Gemini 2.5 Pro")
-            if "GPT-4o-mini" in ai_providers and OPENAI_API_KEY:
-                st.write("🤖 GPT-4o-mini 분석 중...")
-                q, d = summarize_openai(filtered, OPENAI_API_KEY, pq, pd_)
-                if q: all_quick.append(f"### 🟢 GPT-4o-mini\n{q}")
-                if d: all_deep.append(f"### 🟢 GPT-4o-mini\n{d}")
-                used.append("GPT-4o-mini")
+                if q: all_quick.append(f"### 🔵 {GEMINI_LABEL}\n{q}")
+                if d: all_deep.append(f"### 🔵 {GEMINI_LABEL}\n{d}")
+                used.append(GEMINI_LABEL)
             if not used: st.write("⚠️ API 키 없음")
+            _deep_joined = "\n\n---\n\n".join(all_deep)
+
+            # Deep 분석 끝에 붙은 마커로 투자심리 게이지를 갱신한다.
+            # BTC 심리는 코인/기술적/온체인, 미국주식 심리는 주식/M7 모드에서만 반영.
+            _s_btc, _s_stock = _parse_sentiment(_deep_joined)
+            if _s_btc and prefix in ("coin_", "ta_", "oc_"):
+                st.session_state["btc_sentiment"] = _s_btc
+            if _s_stock and prefix in ("stock_", "m7_"):
+                st.session_state["stock_sentiment"] = _s_stock
+
             st.session_state[f"{prefix}summary_quick"] = "\n\n---\n\n".join(all_quick)
-            st.session_state[f"{prefix}summary_deep"]  = "\n\n---\n\n".join(all_deep)
+            st.session_state[f"{prefix}summary_deep"]  = _strip_sentiment(_deep_joined)
             st.session_state[f"{prefix}provider"]      = " + ".join(used)
 
         status.update(label=f"✅ 수집 완료 — {len(filtered)}건", state="complete")
@@ -2798,8 +2295,7 @@ if run_btn:
 # ── 메인 화면 ─────────────────────────────────────
 # ══════════════════════════════════════════════════
 prefix        = {"stock":"stock_","coin":"coin_","ta":"ta_","oc":"oc_","m7":"m7_",
-                 "btc_treasury":"btc_treasury_","usdt_apy":"usdt_apy_",
-                 "combined":"combined_"}[nav_mode]
+                 "btc_treasury":"btc_treasury_","usdt_apy":"usdt_apy_"}[nav_mode]
 news_data     = st.session_state[f"{prefix}news_data"]
 source_stats  = st.session_state[f"{prefix}source_stats"]
 summary_quick = st.session_state[f"{prefix}summary_quick"]
@@ -2815,7 +2311,6 @@ MODE_CFG = {
     "m7":           {"title":"🏆 미국주식 기술적 분석", "accent":"#10B981", "icon":"🏆"},
     "btc_treasury": {"title":"🏦 BTC Treasury",      "accent":"#F59E0B", "icon":"🏦"},
     "usdt_apy":     {"title":"💵 USDT APY",           "accent":"#10B981", "icon":"💵"},
-    "combined":     {"title":"🤖 AI 종합분석",         "accent":"#7C3AED", "icon":"🤖"},
 }
 cfg    = MODE_CFG[nav_mode]
 accent = cfg["accent"]
@@ -3214,82 +2709,6 @@ render(rows);
                 + "".join(render_news_row(item) for item in _unews),
                 unsafe_allow_html=True,
             )
-    st.markdown("</div>", unsafe_allow_html=True)
-    st.stop()
-
-# ── 종합분석 모드 전용 화면
-if is_combined:
-    _cs = st.session_state.get("combined_summary_deep", "")
-    _cp = st.session_state.get("combined_provider", "")
-
-    # Discord 발송 현황 카드
-    _last_sent = st.session_state.get("discord_last_sent", "")
-    _last_sent_date = st.session_state.get("discord_last_sent_date", "")
-    _last_run_at = st.session_state.get("combined_last_run_at", "")
-    _last_run_status = st.session_state.get("combined_last_run_status", "")
-    _next_kst = NOW_KST.replace(hour=8, minute=0, second=0, microsecond=0)
-    if NOW_KST.hour >= 8:
-        _next_kst += datetime.timedelta(days=1)
-    _next_str = _next_kst.strftime("%Y-%m-%d 08:00 KST")
-    _today_sent = (_last_sent_date == TODAY_STR)
-    if _today_sent:
-        _today_badge = '<span style="background:#D1FAE5;color:#065F46;border:1px solid #6EE7B7;padding:3px 10px;border-radius:6px;font-size:.8rem;font-weight:700">✅ 오늘 발송 완료</span>'
-    else:
-        _today_badge = '<span style="background:#F3F4F6;color:#6B7280;border:1px solid #E5E7EB;padding:3px 10px;border-radius:6px;font-size:.8rem;font-weight:700">— 오늘 미발송</span>'
-
-    if _last_sent:
-        _last_sent_badge = f'<span style="background:#D1FAE5;color:#065F46;border:1px solid #6EE7B7;padding:3px 10px;border-radius:6px;font-size:.8rem;font-weight:700">✅ 마지막 발송: {_last_sent}</span>'
-    else:
-        _last_sent_badge = '<span style="background:#F3F4F6;color:#6B7280;border:1px solid #E5E7EB;padding:3px 10px;border-radius:6px;font-size:.8rem;font-weight:700">— 마지막 발송 기록 없음</span>'
-
-    _run_status_labels = {
-        "running": "⏳ 분석 실행 중",
-        "success_sent": "✅ 분석 완료 · Discord 발송 성공",
-        "success_skipped_daily_limit": "ℹ️ 오늘은 발송 스킵됨 (하루 1회 제한)",
-        "success_skipped_missing_webhook": "⚠️ 발송 스킵됨 (DISCORD_WEBHOOK_URL 미설정)",
-        "success_send_failed": "⚠️ 분석 완료 · Discord 발송 실패",
-        "failed_no_analysis": "❌ 분석 실패 (모드별 분석 생성 실패)",
-        "failed_combined_generation": "❌ 분석 실패 (종합 리포트 생성 실패)",
-    }
-    _run_status_text = _run_status_labels.get(_last_run_status, "— 실행 상태 없음")
-    _run_status_badge = (
-        f'<span style="background:#FEF3C7;color:#92400E;border:1px solid #FCD34D;padding:3px 10px;border-radius:6px;font-size:.8rem;font-weight:700">{_run_status_text}</span>'
-        if _last_run_status else
-        '<span style="background:#F3F4F6;color:#6B7280;border:1px solid #E5E7EB;padding:3px 10px;border-radius:6px;font-size:.8rem;font-weight:700">— 실행 상태 없음</span>'
-    )
-
-    if not _get_discord_webhook():
-        st.warning("DISCORD_WEBHOOK_URL이 설정되지 않아 자동 Discord 발송이 비활성화되어 있습니다.")
-    st.markdown(f"""
-    <div style="background:#FFFFFF;border:1px solid #E5E7EB;border-radius:10px;padding:12px 18px;margin-bottom:16px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
-      <span style="font-size:.85rem;color:#374151;font-weight:600">📨 Discord 자동 발송</span>
-      {_today_badge}
-      {_last_sent_badge}
-      {_run_status_badge}
-      <span style="font-size:.8rem;color:#9CA3AF">마지막 실행: {_last_run_at or '-'}</span>
-      <span style="font-size:.8rem;color:#9CA3AF;margin-left:auto">다음 예정: {_next_str}</span>
-    </div>""", unsafe_allow_html=True)
-
-    if not _cs:
-        st.markdown("""
-        <div class="cq-empty">
-          <div class="empty-icon">🤖</div>
-          <h3>AI 종합분석</h3>
-          <p>사이드바의 <b>🚀 AI 종합분석 실행</b> 버튼을 클릭하세요.<br>
-          5개 모드 뉴스 수집 및 AI 분석이 자동으로 실행됩니다.</p>
-        </div>""", unsafe_allow_html=True)
-    else:
-        _pv = f" — {_cp}" if _cp else ""
-        st.markdown(f"""
-        <div class="cq-ai-card">
-          <div class="cq-ai-header">
-            <div class="cq-ai-dot" style="background:#7C3AED"></div>
-            <div class="cq-ai-title">🤖 AI 종합분석 리포트</div>
-            <div class="cq-ai-provider">{_pv} · {TODAY_STR} KST</div>
-          </div>
-        </div>""", unsafe_allow_html=True)
-        _copy_btn(_cs)
-        st.markdown(_cs)
     st.markdown("</div>", unsafe_allow_html=True)
     st.stop()
 
