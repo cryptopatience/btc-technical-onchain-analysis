@@ -265,12 +265,19 @@ header[data-testid="stHeader"] { background: #FFFFFF !important; border-bottom: 
 
 /* ── 사이드바 로고 ── */
 .cq-sidebar-logo {
-    padding: 16px 16px 12px;
-    font-size: .95rem; font-weight: 800; color: #111827;
+    padding: 18px 16px 14px;
     border-bottom: 1px solid #F3F4F6;
-    display: flex; align-items: center; gap: 8px;
+    display: flex; align-items: baseline; gap: 8px;
 }
-.cq-sidebar-logo .dot { color: #F7931A; }
+.cq-sidebar-logo .brand {
+    font-size: 1.4rem; font-weight: 800; font-style: italic;
+    letter-spacing: -.02em; line-height: 1.15;
+    color: #111827;  /* background-clip 미지원 브라우저용 대체 */
+    background: linear-gradient(100deg, #111827 28%, #F7931A 100%);
+    -webkit-background-clip: text; background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+.cq-sidebar-logo .dot { color: #F7931A; font-size: 1.1rem; }
 
 /* ── 통계 카드 행 ── */
 .cq-stats-row {
@@ -1984,8 +1991,8 @@ with st.sidebar:
     # 로고
     st.markdown("""
     <div class="cq-sidebar-logo">
-      <span style="font-size:1.2rem">📊</span>
-      SCGT Finance <span class="dot">•</span>
+      <span style="font-size:1.25rem">📊</span>
+      <span class="brand">SCGT Finance</span><span class="dot">•</span>
     </div>
     """, unsafe_allow_html=True)
 
