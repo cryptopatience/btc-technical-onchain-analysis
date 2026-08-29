@@ -1459,19 +1459,29 @@ def zoomable_line_chart(df, y_suffix: str = "", height: int = 260) -> None:
     """드래그로 구간을 선택해 확대할 수 있는 선 그래프를 그린다.
 
     df 는 DatetimeIndex 를 갖고, 각 열이 하나의 시리즈가 된다.
+
+    plotly 는 드래그 박스의 세로 폭이 20px 미만이면 x축 전용 확대로 잠근다
+    (plotly.js MINZOOM). 그래서 가로로 납작하게 드래그하면 y축 범위가 전체
+    데이터에 맞춰진 채로 남아, 스파이크 하나 때문에 확대한 구간이 눌려 보인다.
+    x축만 확대된 경우 보이는 구간의 최소·최대에 맞춰 y축을 다시 잡아준다.
     """
     import plotly.graph_objects as go
 
+    # numpy 배열을 그대로 주면 to_json 이 base64(bdata)로 직렬화해 아래 JS 에서
+    # 읽을 수 없다. 평범한 리스트로 넘겨 JSON 배열로 나가게 한다.
+    xs = [d.isoformat() for d in pd.DatetimeIndex(df.index).to_pydatetime()]
+
     fig = go.Figure()
     for col in df.columns:
+        ys = [None if pd.isna(v) else float(v) for v in df[col]]
         fig.add_trace(go.Scatter(
-            x=df.index, y=df[col], name=str(col), mode="lines",
+            x=xs, y=ys, name=str(col), mode="lines",
             line=dict(color=SERIES_COLORS.get(str(col)), width=1.6),
             hovertemplate="%{x|%Y-%m-%d}<br>%{y:.2f}" + y_suffix + "<extra>" + str(col) + "</extra>",
         ))
 
     fig.update_layout(
-        dragmode="zoom",           # 드래그 = 영역 선택 확대
+        dragmode="zoom",
         hovermode="x unified",
         height=height,
         margin=dict(l=8, r=8, t=8, b=8),
@@ -1483,16 +1493,79 @@ def zoomable_line_chart(df, y_suffix: str = "", height: int = 260) -> None:
         showlegend=True,
     )
     axis = dict(gridcolor="#EEF1F5", linecolor="#E5E7EB",
-                zeroline=False, showspikes=False)
+                zeroline=False, showspikes=False, fixedrange=False)
     fig.update_xaxes(**axis)
     fig.update_yaxes(**axis, ticksuffix=y_suffix)
 
-    st.plotly_chart(fig, use_container_width=True, theme=None, config={
-        "scrollZoom": True,        # 휠로도 확대/축소
-        "doubleClick": "reset",    # 더블클릭 = 원래 범위로
-        "displaylogo": False,
-        "modeBarButtonsToRemove": ["select2d", "lasso2d"],
-    })
+    div_id = "zchart-" + str(abs(hash((tuple(df.columns), len(df), y_suffix))))
+    html = _ZOOM_CHART_HTML
+    html = html.replace("__ID__", div_id).replace("__FIG__", fig.to_json())
+    components.html(html, height=height + 12)
+
+
+# x축만 확대됐을 때 y축을 보이는 구간에 맞춰 다시 잡는다.
+# relayout 이벤트에 yaxis 키가 함께 오면 사용자가 세로까지 직접 지정한 것이므로
+# 그대로 존중하고, xaxis 키만 온 경우에만 개입한다.
+_ZOOM_CHART_HTML = """
+<div id="__ID__" style="width:100%"></div>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<script>
+(function () {
+  var fig = __FIG__;
+  var cfg = {
+    scrollZoom: true, doubleClick: "reset", displaylogo: false, responsive: true,
+    modeBarButtonsToRemove: ["select2d", "lasso2d"]
+  };
+  var gd = document.getElementById("__ID__");
+  Plotly.newPlot(gd, fig.data, fig.layout, cfg).then(function () {
+    var busy = false;
+
+    function visibleYRange() {
+      var xr = gd.layout.xaxis && gd.layout.xaxis.range;
+      if (!xr) return null;
+      var lo = new Date(xr[0]).getTime(), hi = new Date(xr[1]).getTime();
+      var mn = Infinity, mx = -Infinity;
+      // plotly 가 typed array 로 디코딩해 두는 _fullData 를 우선 쓴다.
+      var src = (gd._fullData && gd._fullData.length === gd.data.length)
+                ? gd._fullData : gd.data;
+      src.forEach(function (tr) {
+        if (tr.visible === "legendonly") return;
+        if (!tr.x || !tr.y || !tr.x.length) return;
+        for (var i = 0; i < tr.x.length; i++) {
+          var t = new Date(tr.x[i]).getTime();
+          if (t < lo || t > hi) continue;
+          var v = tr.y[i];
+          if (v === null || v === undefined || isNaN(v)) continue;
+          if (v < mn) mn = v;
+          if (v > mx) mx = v;
+        }
+      });
+      if (!isFinite(mn) || !isFinite(mx)) return null;
+      var pad = (mx - mn) * 0.08 || Math.abs(mx) * 0.08 || 1;
+      return [mn - pad, mx + pad];
+    }
+
+    gd.on("plotly_relayout", function (ev) {
+      if (busy || !ev) return;
+      var keys = Object.keys(ev);
+      var touchedY = keys.some(function (k) { return k.indexOf("yaxis") === 0; });
+      var touchedX = keys.some(function (k) { return k.indexOf("xaxis") === 0; });
+      if (!touchedX || touchedY) return;
+
+      busy = true;
+      var done = function () { busy = false; };
+      if (ev["xaxis.autorange"]) {
+        Plotly.relayout(gd, {"yaxis.autorange": true}).then(done, done);
+        return;
+      }
+      var yr = visibleYRange();
+      if (yr) { Plotly.relayout(gd, {"yaxis.range": yr}).then(done, done); }
+      else { busy = false; }
+    });
+  });
+})();
+</script>
+"""
 
 
 def _copy_btn(text: str) -> None:
@@ -1917,6 +1990,193 @@ def summarize_usdt_apy_gemini(pools: list, history: list, api_key: str,
 # ══════════════════════════════════════════════════
 # ── 세션 초기화 ───────────────────────────────────
 # ══════════════════════════════════════════════════
+# ══════════════════════════════════════════════════
+# ── HY Spread (하이일드 신용 스프레드) ─────────────
+# ══════════════════════════════════════════════════
+# ICE BofA US High Yield Index Option-Adjusted Spread (FRED: BAMLH0A0HYM2).
+# 정크본드 금리 − 국채 금리 = 채권시장이 매기는 기업 부도 위험.
+# 주식보다 먼저 반응하는 경우가 많아 위험자산 선호도의 선행 지표로 쓰인다.
+HY_SERIES_ID = "BAMLH0A0HYM2"
+
+HY_CRISIS  = 5.0   # 위기 임계점
+HY_DANGER  = 4.0   # 위험(경고)
+HY_CAUTION = 3.0   # 경계(주의)
+HY_STABLE  = 2.0   # 안정
+
+# (하한, 상한, 라벨, 상태, 행동, 색) — 색은 앱의 라이트 팔레트에 맞춘 값
+HY_ZONES = [
+    (HY_CRISIS,  None,       ">5.0%",    "🚨 위기", "즉시 매도! 방어 태세", "#DC2626"),
+    (HY_DANGER,  HY_CRISIS,  "4.0-5.0%", "⚠️ 위험", "포지션 축소",          "#EA580C"),
+    (HY_CAUTION, HY_DANGER,  "3.0-4.0%", "⚡ 경계", "신중한 매매",          "#D97706"),
+    (None,       HY_CAUTION, "<3.0%",    "✅ 안정", "정상 투자 가능",       "#16A34A"),
+]
+
+
+def hy_risk_of(spread: float) -> tuple:
+    """현재 스프레드 → (상태, 행동, 색)"""
+    if spread >= HY_CRISIS:  return "🚨 위기", "즉시 매도! 방어 태세", "#DC2626"
+    if spread >= HY_DANGER:  return "⚠️ 위험", "포지션 축소",          "#EA580C"
+    if spread >= HY_CAUTION: return "⚡ 경계", "신중한 매매",          "#D97706"
+    return "✅ 안정", "정상 투자 가능", "#16A34A"
+
+
+def fetch_hy_spread() -> tuple:
+    """HY 스프레드 전체 시계열을 받아온다. → (records, source, error)
+
+    records 는 [{"date": "YYYY-MM-DD", "value": float}, ...] 형태다.
+
+    FRED 웹사이트(fred.stlouisfed.org)가 막힌 망이 있어 두 경로를 둔다.
+    공개 CSV 를 먼저 시도하고, 실패하면 별도 호스트인 FRED API 로 넘어간다.
+    API 는 무료 키가 필요하며 FRED_API_KEY 로 읽는다.
+    """
+    import io as _io
+
+    csv_err = ""
+    try:
+        r = requests.get(f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={HY_SERIES_ID}",
+                         headers=HEADERS, timeout=20)
+        r.raise_for_status()
+        df = pd.read_csv(_io.StringIO(r.text))
+        date_col, val_col = df.columns[0], df.columns[1]
+        df[val_col] = pd.to_numeric(df[val_col], errors="coerce")
+        df = df.dropna(subset=[val_col])
+        rows = [{"date": str(d)[:10], "value": float(v)}
+                for d, v in zip(pd.to_datetime(df[date_col]), df[val_col])]
+        if rows:
+            return rows, "FRED CSV", ""
+        csv_err = "CSV 응답에 데이터가 없습니다."
+    except Exception as e:
+        csv_err = f"{type(e).__name__}: {str(e)[:120]}"
+
+    api_key = (get_secret("FRED_API_KEY") or "").strip()
+    if not api_key:
+        return [], "", (
+            f"FRED CSV 접속 실패 ({csv_err}). "
+            "이 망에서 fred.stlouisfed.org 가 차단된 경우, "
+            "무료 FRED API 키를 발급받아 FRED_API_KEY 로 설정하면 우회할 수 있습니다."
+        )
+
+    try:
+        r = requests.get(
+            "https://api.stlouisfed.org/fred/series/observations",
+            params={"series_id": HY_SERIES_ID, "api_key": api_key,
+                    "file_type": "json", "observation_start": "1996-12-31"},
+            headers=HEADERS, timeout=30)
+        r.raise_for_status()
+        rows = []
+        for o in r.json().get("observations", []):
+            v = o.get("value", ".")
+            if v in (".", "", None):
+                continue
+            try:
+                rows.append({"date": o["date"], "value": float(v)})
+            except ValueError:
+                continue
+        if not rows:
+            return [], "", "FRED API 응답에 데이터가 없습니다."
+        return rows, "FRED API", ""
+    except Exception as e:
+        return [], "", f"FRED CSV·API 모두 실패 (CSV: {csv_err} / API: {type(e).__name__})"
+
+
+def fetch_sp500_history(years: int = 10) -> list:
+    """S&P 500 일봉 종가. yfinance 없이 Yahoo 차트 API 를 직접 쓴다."""
+    try:
+        now = int(time.time())
+        start = now - int(365.25 * 24 * 3600 * max(years, 1))
+        r = requests.get(
+            "https://query1.finance.yahoo.com/v8/finance/chart/%5EGSPC",
+            params={"period1": start, "period2": now, "interval": "1d"},
+            headers=HEADERS, timeout=25)
+        r.raise_for_status()
+        res = r.json()["chart"]["result"][0]
+        ts = res["timestamp"]
+        closes = res["indicators"]["quote"][0]["close"]
+        out = []
+        for t, c in zip(ts, closes):
+            if c is None:
+                continue
+            out.append({"date": datetime.datetime.fromtimestamp(
+                            t, datetime.timezone.utc).strftime("%Y-%m-%d"),
+                        "value": float(c)})
+        return out
+    except Exception:
+        return []
+
+
+def hy_divergence(hy_rows: list, sp_rows: list, lookback: int = 20) -> str:
+    """스프레드 상승과 S&P 상승이 겹치는 괴리 구간을 문장으로 돌려준다.
+
+    채권시장은 위험을 반영하는데 주식시장이 무시하는 상황으로, 경계 신호다.
+    해당 없으면 빈 문자열.
+    """
+    if len(hy_rows) <= lookback or len(sp_rows) <= lookback:
+        return ""
+    hy_chg = hy_rows[-1]["value"] - hy_rows[-1 - lookback]["value"]
+    sp_old = sp_rows[-1 - lookback]["value"]
+    if not sp_old:
+        return ""
+    sp_chg = sp_rows[-1]["value"] / sp_old - 1
+    if hy_chg > 0.30 and sp_chg > 0:
+        return (f"최근 {lookback}거래일 동안 스프레드는 {hy_chg:+.2f}%p 벌어졌는데 "
+                f"S&P 500 은 {sp_chg:+.1%} 올랐습니다. "
+                "채권시장은 위험을 보는데 주식시장이 무시하는 구간입니다.")
+    return ""
+
+
+def summarize_hy_spread_gemini(hy_rows: list, sp_rows: list, api_key: str) -> str:
+    """HY 스프레드 수준·추세·괴리 신호를 Gemini 로 해석한다."""
+    try:
+        from google import genai
+        from google.genai import types
+    except ImportError:
+        return ""
+    if not hy_rows:
+        return ""
+
+    cur = hy_rows[-1]["value"]
+    state, action, _ = hy_risk_of(cur)
+    vals = [r["value"] for r in hy_rows]
+    y1 = vals[-252:] if len(vals) >= 252 else vals
+    pct_rank = sum(1 for v in vals if v < cur) / len(vals) * 100
+
+    def _ago(n):
+        return hy_rows[-1 - n]["value"] if len(hy_rows) > n else cur
+
+    facts = [
+        f"- 최신일: {hy_rows[-1]['date']}",
+        f"- 현재 스프레드: {cur:.2f}% ({state}, 권장 행동: {action})",
+        f"- 전일 대비 {cur - _ago(1):+.2f}%p · 20거래일 대비 {cur - _ago(20):+.2f}%p · "
+        f"60거래일 대비 {cur - _ago(60):+.2f}%p",
+        f"- 최근 1년 최고 {max(y1):.2f}% · 최저 {min(y1):.2f}% · 평균 {sum(y1)/len(y1):.2f}%",
+        f"- 제공 구간({hy_rows[0]['date']}~{hy_rows[-1]['date']}) 내 백분위 {pct_rank:.0f}% "
+        f"(낮을수록 타이트. FRED 는 최근 3년치만 제공하므로 장기 비교는 아님)",
+        f"- 위기선 5.0%까지 거리 {HY_CRISIS - cur:+.2f}%p",
+    ]
+    div = hy_divergence(hy_rows, sp_rows)
+    if div:
+        facts.append(f"- 괴리 신호: {div}")
+
+    prompt = (
+        "다음은 ICE BofA US High Yield Option-Adjusted Spread(하이일드 신용 스프레드) "
+        f"현황입니다. 기준일 {TODAY_STR} (KST).\n\n"
+        + "\n".join(facts) +
+        "\n\n위 수치만을 근거로 한국어 분석을 작성해주세요.\n"
+        "1. **현재 신용 환경 진단** (스프레드 수준과 역사적 위치의 의미)\n"
+        "2. **추세 판단** (확대 중인지 축소 중인지, 속도는 어떤지)\n"
+        "3. **위험자산·비트코인 시사점** (신용 스프레드와 위험자산 선호도의 관계)\n"
+        "4. **주시해야 할 임계 레벨과 시나리오**\n"
+        "5. **결론: 핵심 관찰 3가지**\n"
+        "전문적이고 날카로운 금융 리포트 톤으로 작성하되, 위에 제시된 수치를 "
+        "벗어난 추측은 하지 마세요."
+    )
+    client = genai.Client(api_key=api_key)
+    try:
+        return _gemini_generate(client, types, prompt, temperature=0.3, max_output_tokens=8000)
+    except Exception as e:
+        return f"[Gemini 오류: {e}]"
+
+
 CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "analysis_cache.json")
 
 
@@ -1960,7 +2220,7 @@ def save_cache():
 
 
 def init_session():
-    for prefix in ("stock_","coin_","ta_","oc_","m7_","btc_treasury_","usdt_apy_"):
+    for prefix in ("stock_","coin_","ta_","oc_","m7_","btc_treasury_","usdt_apy_","hy_spread_"):
         for key in ("news_data","source_stats","summary_quick","summary_deep","provider"):
             fk = f"{prefix}{key}"
             if fk not in st.session_state:
@@ -2005,6 +2265,7 @@ with st.sidebar:
         "🏆  미국주식 기술적 분석",
         "🏦  BTC Treasury",
         "💵  USDT APY",
+        "📉  HY Spread",
     ], label_visibility="collapsed")
 
     nav_mode = {
@@ -2015,6 +2276,7 @@ with st.sidebar:
         "🏆  미국주식 기술적 분석": "m7",
         "🏦  BTC Treasury":        "btc_treasury",
         "💵  USDT APY":            "usdt_apy",
+        "📉  HY Spread":           "hy_spread",
     }[mode_label]
 
     is_stock       = nav_mode == "stock"
@@ -2024,6 +2286,7 @@ with st.sidebar:
     is_m7          = nav_mode == "m7"
     is_treasury    = nav_mode == "btc_treasury"
     is_usdt_apy    = nav_mode == "usdt_apy"
+    is_hy_spread   = nav_mode == "hy_spread"
 
     st.markdown('<div class="cq-divider"></div>', unsafe_allow_html=True)
 
@@ -2086,6 +2349,22 @@ with st.sidebar:
         _max_apy_v = st.slider("최대 APY (%)", 10, 200, 50)
         _top_n_v   = st.slider("상위 N개", 10, 100, 50)
         run_label = "USDT APY 조회"
+
+    elif is_hy_spread:
+        st.markdown("**데이터 소스**")
+        st.caption("FRED · BAMLH0A0HYM2 (무료)")
+        # FRED 는 ICE 라이선스 변경으로 2026-04 부터 이 시리즈를 최근 3년만 제공한다.
+        _hy_years    = st.slider("조회 기간 (년)", 1, 3, 3)
+        _hy_show_spx = st.checkbox("S&P 500 비교", value=True)
+        _hy_zones    = st.checkbox("위험 구간 배경색", value=True)
+        _hy_signals  = st.checkbox("구간 돌파 신호 표시", value=True)
+        st.caption(
+            "정크본드 금리 − 국채 금리. 스프레드가 벌어진다는 건 "
+            "채권시장이 기업 부도 위험을 크게 보기 시작했다는 뜻으로, "
+            "주식보다 먼저 반응하는 경우가 많습니다."
+        )
+        st.caption("⚠️ ICE 라이선스 변경으로 FRED 는 2026-04 부터 최근 3년치만 제공합니다.")
+        run_label = "HY Spread 조회"
 
 
     else:
@@ -2283,6 +2562,25 @@ if run_btn:
                     st.session_state["usdt_apy_news_data"])
         st.rerun()
 
+    elif is_hy_spread:
+        with st.spinner("📉 FRED 하이일드 스프레드 수집 중..."):
+            _hy_rows, _hy_src, _hy_err = fetch_hy_spread()
+        st.session_state["hy_spread_data"]       = _hy_rows
+        st.session_state["hy_spread_source"]     = _hy_src
+        st.session_state["hy_spread_error"]      = _hy_err
+        st.session_state["hy_spread_ai_summary"] = ""
+        st.session_state["hy_sp500_data"]        = []
+
+        if _hy_rows and _hy_show_spx:
+            with st.spinner("📈 S&P 500 수집 중..."):
+                st.session_state["hy_sp500_data"] = fetch_sp500_history(_hy_years)
+
+        if _hy_rows and use_ai and GEMINI_API_KEY and GEMINI_LABEL in ai_providers:
+            with st.spinner("🤖 AI 분석 중..."):
+                st.session_state["hy_spread_ai_summary"] = summarize_hy_spread_gemini(
+                    _hy_rows, st.session_state["hy_sp500_data"], GEMINI_API_KEY)
+        st.rerun()
+
     else:
         tasks = []
         if src_yahoo_m7: tasks.append(("Yahoo Finance", fetch_yahoo_finance_m7, [selected_tickers]))
@@ -2352,7 +2650,8 @@ if run_btn:
 # ── 메인 화면 ─────────────────────────────────────
 # ══════════════════════════════════════════════════
 prefix        = {"stock":"stock_","coin":"coin_","ta":"ta_","oc":"oc_","m7":"m7_",
-                 "btc_treasury":"btc_treasury_","usdt_apy":"usdt_apy_"}[nav_mode]
+                 "btc_treasury":"btc_treasury_","usdt_apy":"usdt_apy_",
+                 "hy_spread":"hy_spread_"}[nav_mode]
 news_data     = st.session_state[f"{prefix}news_data"]
 source_stats  = st.session_state[f"{prefix}source_stats"]
 summary_quick = st.session_state[f"{prefix}summary_quick"]
@@ -2368,6 +2667,7 @@ MODE_CFG = {
     "m7":           {"title":"🏆 미국주식 기술적 분석", "accent":"#10B981", "icon":"🏆"},
     "btc_treasury": {"title":"🏦 BTC Treasury",      "accent":"#F59E0B", "icon":"🏦"},
     "usdt_apy":     {"title":"💵 USDT APY",           "accent":"#10B981", "icon":"💵"},
+    "hy_spread":    {"title":"📉 HY Spread",          "accent":"#DC2626", "icon":"📉"},
 }
 cfg    = MODE_CFG[nav_mode]
 accent = cfg["accent"]
@@ -2769,6 +3069,200 @@ render(rows);
     st.markdown("</div>", unsafe_allow_html=True)
     st.stop()
 
+# ── HY Spread 모드 전용 화면
+if is_hy_spread:
+    _hy   = st.session_state.get("hy_spread_data", [])
+    _hsrc = st.session_state.get("hy_spread_source", "")
+    _herr = st.session_state.get("hy_spread_error", "")
+
+    if _herr:
+        st.error(_herr)
+    if not _hy:
+        st.markdown("""
+        <div class="cq-empty">
+          <div class="empty-icon">📉</div>
+          <h3>HY Spread</h3>
+          <p>사이드바의 <b>📉 HY Spread 조회</b> 버튼을 클릭하세요.<br>
+          하이일드 신용 스프레드로 시장의 위험 신호를 확인합니다.</p>
+        </div>""", unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+        st.stop()
+
+    # 사이드바에서 고른 기간만큼 잘라서 본다.
+    _cut  = (NOW_KST - datetime.timedelta(days=365 * _hy_years)).strftime("%Y-%m-%d")
+    _view = [r for r in _hy if r["date"] >= _cut] or _hy
+    _cur   = _view[-1]["value"]
+    _prev  = _view[-2]["value"] if len(_view) > 1 else _cur
+    _state, _action, _scolor = hy_risk_of(_cur)
+    _dist  = HY_CRISIS - _cur
+
+    st.caption(f"FRED · BAMLH0A0HYM2 · ICE BofA US High Yield OAS · "
+               f"최근 데이터 {_view[-1]['date']} · 출처 {_hsrc}")
+
+    h1, h2, h3, h4 = st.columns(4)
+    h1.metric("현재 스프레드", f"{_cur:.2f}%",
+              delta=f"{_cur - _prev:+.2f}%p (전일 대비)", delta_color="inverse")
+    h2.metric("위험도", _state)
+    h3.metric("권장 행동", _action)
+    h4.metric("위기선(5.0%)까지", f"{_dist:.2f}%p" if _dist > 0 else "위기 상태!")
+
+    if _cur >= HY_CRISIS:
+        st.error("🚨 **위기 돌입!** 스프레드가 5.0%를 넘었습니다. 역사적으로 위기의 시작점입니다.")
+    elif _cur >= HY_DANGER:
+        st.warning("⚠️ **위험 구간.** 포지션 축소를 고려하세요.")
+    elif _cur >= HY_CAUTION:
+        st.warning("⚡ **경계 구간.** 신중한 매매가 필요합니다.")
+    else:
+        st.success("✅ **안정 구간.** 채권시장은 현재 큰 위험을 반영하고 있지 않습니다.")
+
+    _sp  = st.session_state.get("hy_sp500_data", [])
+    _div = hy_divergence(_view, _sp)
+    if _div:
+        st.error("💰 **괴리(Divergence) 감지!** " + _div)
+
+    # ── 차트
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+
+    _xs = [r["date"] for r in _view]
+    _ys = [r["value"] for r in _view]
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+
+    if _hy_zones:
+        _ymax = max(max(_ys) * 1.1, HY_CRISIS + 1)
+        for _y0, _y1, _c, _op in [
+            (0, HY_STABLE, "#16A34A", .07), (HY_STABLE, HY_CAUTION, "#16A34A", .04),
+            (HY_CAUTION, HY_DANGER, "#D97706", .08), (HY_DANGER, HY_CRISIS, "#EA580C", .10),
+            (HY_CRISIS, _ymax, "#DC2626", .12),
+        ]:
+            fig.add_hrect(y0=_y0, y1=_y1, fillcolor=_c, opacity=_op, line_width=0)
+
+    fig.add_trace(go.Scatter(
+        x=_xs, y=_ys, name="HY Spread (%)", mode="lines",
+        line=dict(color="#111827", width=1.8),
+        hovertemplate="%{x|%Y-%m-%d}<br>스프레드 %{y:.2f}%<extra></extra>",
+    ), secondary_y=False)
+
+    for _lv, _lb, _c, _d in [
+        (HY_CRISIS,  "5.0% 위기", "#DC2626", "solid"),
+        (HY_DANGER,  "4.0% 경고", "#EA580C", "dash"),
+        (HY_CAUTION, "3.0% 주의", "#D97706", "dash"),
+        (HY_STABLE,  "2.0% 안정", "#16A34A", "dash"),
+    ]:
+        fig.add_hline(y=_lv, line=dict(color=_c, dash=_d, width=1.2),
+                      annotation_text=_lb, annotation_position="right",
+                      annotation_font=dict(color=_c, size=10))
+
+    if _hy_signals:
+        # 임계선을 처음 넘어선 날, 그리고 주의선 아래로 되돌아온 날만 찍는다.
+        for _lo, _hi, _txt, _c, _sym in [
+            (HY_CRISIS, None, "🚨 위기 돌입", "#DC2626", "triangle-up"),
+            (HY_DANGER, HY_CRISIS, "⚠️ 위험 진입", "#EA580C", "triangle-up"),
+            (None, HY_CAUTION, "✅ 안정 회복", "#16A34A", "triangle-down"),
+        ]:
+            _px, _py = [], []
+            for _n in range(1, len(_view)):
+                _a, _b = _view[_n - 1]["value"], _view[_n]["value"]
+                _hit = (_b >= _lo and _a < _lo) if _lo is not None else (_b < _hi and _a >= _hi)
+                if _hit:
+                    _px.append(_view[_n]["date"])
+                    _py.append(_b)
+            if _px:
+                fig.add_trace(go.Scatter(
+                    x=_px, y=_py, mode="markers", name=_txt,
+                    marker=dict(color=_c, size=10, symbol=_sym,
+                                line=dict(color="white", width=1)),
+                    hovertemplate="%{x|%Y-%m-%d}<br>" + _txt + " (%{y:.2f}%)<extra></extra>",
+                ), secondary_y=False)
+
+    if _sp:
+        _spv = [r for r in _sp if r["date"] >= _cut]
+        if _spv:
+            fig.add_trace(go.Scatter(
+                x=[r["date"] for r in _spv], y=[r["value"] for r in _spv],
+                name="S&P 500", mode="lines",
+                line=dict(color="#3B82F6", width=1.1), opacity=.7,
+                hovertemplate="%{x|%Y-%m-%d}<br>S&P 500 %{y:,.0f}<extra></extra>",
+            ), secondary_y=True)
+    elif _hy_show_spx:
+        st.info("S&P 500 데이터를 불러오지 못했습니다. 스프레드만 표시합니다.")
+
+    fig.update_layout(
+        dragmode="zoom", hovermode="x unified", height=520,
+        margin=dict(l=8, r=8, t=8, b=8),
+        paper_bgcolor="#FFFFFF", plot_bgcolor="#FFFFFF",
+        font=dict(color="#374151", size=11),
+        legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="left", x=0,
+                    title_text=""),
+    )
+    fig.update_xaxes(gridcolor="#EEF1F5", linecolor="#E5E7EB", zeroline=False)
+    fig.update_yaxes(title_text="HY Spread (%)", secondary_y=False, rangemode="tozero",
+                     gridcolor="#EEF1F5", linecolor="#E5E7EB", zeroline=False)
+    fig.update_yaxes(title_text="S&P 500", secondary_y=True, showgrid=False)
+    st.plotly_chart(fig, use_container_width=True, theme=None, config={
+        "scrollZoom": True, "doubleClick": "reset", "displaylogo": False,
+        "modeBarButtonsToRemove": ["select2d", "lasso2d"],
+    })
+
+    # ── 위험 구간 기준 + 해석
+    _lc, _rc = st.columns([1, 1])
+    with _lc:
+        st.markdown("#### 위험도 구간 기준")
+        _zrows = "".join(
+            f'<tr style="background:{_z[5]}14">'
+            f'<td style="padding:7px 10px;font-weight:700;color:{_z[5]}">{_z[2]}</td>'
+            f'<td style="padding:7px 10px">{_z[3]}</td>'
+            f'<td style="padding:7px 10px;color:#6B7280">{_z[4]}</td></tr>'
+            for _z in HY_ZONES)
+        st.markdown(
+            '<table style="width:100%;border-collapse:collapse;font-size:.85rem;'
+            'border:1px solid #E5E7EB;border-radius:8px;overflow:hidden">'
+            '<tr style="background:#F9FAFB;color:#6B7280;font-size:.78rem">'
+            '<th style="padding:7px 10px;text-align:left">스프레드</th>'
+            '<th style="padding:7px 10px;text-align:left">상태</th>'
+            '<th style="padding:7px 10px;text-align:left">행동</th></tr>'
+            + _zrows + '</table>', unsafe_allow_html=True)
+
+    with _rc:
+        st.markdown("#### 💰 스마트 머니 신호")
+        st.markdown(
+            "- 채권 투자자들이 보는 **기업 부도 위험도**입니다.\n"
+            "- **스프레드 축소** → 경기 낙관, 위험자산에 우호적 🟢\n"
+            "- **스프레드 급등** → 기업 자금줄 경색, 현금·안전자산 확보 🔴\n"
+            "- **스프레드↑ + S&P 500↑ 동시 발생** = 괴리 신호. 채권시장이 먼저 "
+            "위험을 반영하는 경우가 많아 강력한 경계 신호로 봅니다."
+        )
+
+    st.markdown("#### 최근 통계")
+    _y1  = _ys[-252:] if len(_ys) >= 252 else _ys
+    _all = [r["value"] for r in _hy]
+    _pct = sum(1 for v in _all if v < _cur) / len(_all) * 100
+    s1, s2, s3, s4 = st.columns(4)
+    s1.metric("1년 최고", f"{max(_y1):.2f}%")
+    s2.metric("1년 최저", f"{min(_y1):.2f}%")
+    s3.metric("1년 평균", f"{sum(_y1) / len(_y1):.2f}%")
+    s4.metric("구간 내 백분위", f"{_pct:.0f}%",
+              help=f"FRED 제공 구간({_hy[0]['date']} ~ {_hy[-1]['date']}) 안에서 "
+                   "현재 스프레드가 낮은(안정적인) 정도. 낮을수록 타이트한 수준입니다. "
+                   "ICE 라이선스 변경으로 2026-04 부터 최근 3년치만 제공됩니다.")
+
+    _hy_ai = st.session_state.get("hy_spread_ai_summary", "")
+    if _hy_ai:
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown(f"""
+        <div class="cq-ai-card">
+          <div class="cq-ai-header">
+            <div class="cq-ai-dot" style="background:#DC2626"></div>
+            <div class="cq-ai-title">🤖 AI 신용 스프레드 분석</div>
+            <div class="cq-ai-provider">{GEMINI_LABEL} · {TODAY_STR} KST</div>
+          </div>
+        </div>""", unsafe_allow_html=True)
+        _copy_btn(_hy_ai)
+        st.markdown(_hy_ai)
+
+    st.markdown("</div>", unsafe_allow_html=True)
+    st.stop()
+
 # ── 빈 상태
 if not news_data:
     EMPTY_HINT = {
@@ -2937,6 +3431,7 @@ FOOTER_SRC = {
     "m7":           "Yahoo Finance · Benzinga · MarketWatch · CNBC · Seeking Alpha · Finnhub · Reddit",
     "btc_treasury": "bitbo.io/treasuries · Google News · CoinTelegraph · CoinDesk · The Block",
     "usdt_apy":     "DefiLlama API · Google News · CoinTelegraph · CoinDesk · Yahoo Finance",
+    "hy_spread":    "FRED (ICE BofA US High Yield OAS, BAMLH0A0HYM2) · Yahoo Finance",
 }
 st.markdown(f"""
 <div class="cq-footer">
