@@ -1,5 +1,5 @@
 """
-통합 분석 대시보드 — CryptoQuant 스타일 UI
+SCGT Finance — CryptoQuant 스타일 UI
 모드: 📈 주식 뉴스 | 🪙 코인 뉴스 | 📊 BTC 기술적 분석 | 🔗 BTC 온체인 분석 | 🏆 미국주식 기술적 분석
 """
 
@@ -20,7 +20,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 st.set_page_config(
-    page_title="통합 분석 대시보드",
+    page_title="SCGT Finance",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -67,7 +67,7 @@ if APP_PASSWORD and not st.session_state.authenticated:
     st.markdown(
         '<div class="lock-card">'
         '<div class="icon">📊</div>'
-        '<h2>통합 분석 대시보드</h2>'
+        '<h2>SCGT Finance</h2>'
         '<p>접근하려면 비밀번호를 입력하세요</p></div>',
         unsafe_allow_html=True)
     pw = st.text_input("비밀번호", type="password", placeholder="비밀번호 입력", label_visibility="collapsed")
@@ -1438,6 +1438,56 @@ _SVG_COPY = (
 )
 
 
+# st.line_chart 는 확대/축소를 지원하지 않는다. 드래그로 영역을 지정해 확대하고
+# 더블클릭으로 되돌릴 수 있도록 Plotly 로 그린다.
+SERIES_COLORS = {
+    "APY(%)":  "#EF4444",
+    "7일 MA":  "#93C5FD",
+    "20일 MA": "#1D4ED8",
+    "TVL($M)": "#1D4ED8",
+}
+
+
+def zoomable_line_chart(df, y_suffix: str = "", height: int = 260) -> None:
+    """드래그로 구간을 선택해 확대할 수 있는 선 그래프를 그린다.
+
+    df 는 DatetimeIndex 를 갖고, 각 열이 하나의 시리즈가 된다.
+    """
+    import plotly.graph_objects as go
+
+    fig = go.Figure()
+    for col in df.columns:
+        fig.add_trace(go.Scatter(
+            x=df.index, y=df[col], name=str(col), mode="lines",
+            line=dict(color=SERIES_COLORS.get(str(col)), width=1.6),
+            hovertemplate="%{x|%Y-%m-%d}<br>%{y:.2f}" + y_suffix + "<extra>" + str(col) + "</extra>",
+        ))
+
+    fig.update_layout(
+        dragmode="zoom",           # 드래그 = 영역 선택 확대
+        hovermode="x unified",
+        height=height,
+        margin=dict(l=8, r=8, t=8, b=8),
+        paper_bgcolor="#FFFFFF",
+        plot_bgcolor="#FFFFFF",
+        font=dict(color="#374151", size=11),
+        legend=dict(orientation="h", yanchor="bottom", y=1.0,
+                    xanchor="left", x=0, title_text=""),
+        showlegend=True,
+    )
+    axis = dict(gridcolor="#EEF1F5", linecolor="#E5E7EB",
+                zeroline=False, showspikes=False)
+    fig.update_xaxes(**axis)
+    fig.update_yaxes(**axis, ticksuffix=y_suffix)
+
+    st.plotly_chart(fig, use_container_width=True, theme=None, config={
+        "scrollZoom": True,        # 휠로도 확대/축소
+        "doubleClick": "reset",    # 더블클릭 = 원래 범위로
+        "displaylogo": False,
+        "modeBarButtonsToRemove": ["select2d", "lasso2d"],
+    })
+
+
 def _copy_btn(text: str) -> None:
     js_str = json.dumps(text)
     components.html(f"""
@@ -1935,7 +1985,7 @@ with st.sidebar:
     st.markdown("""
     <div class="cq-sidebar-logo">
       <span style="font-size:1.2rem">📊</span>
-      통합 분석 <span class="dot">•</span>
+      SCGT Finance <span class="dot">•</span>
     </div>
     """, unsafe_allow_html=True)
 
@@ -2322,7 +2372,7 @@ tab_html = "".join(
 )
 st.markdown(f"""
 <div class="cq-topbar">
-  <div class="logo">📊 통합 분석 <span>•</span></div>
+  <div class="logo">📊 SCGT Finance <span>•</span></div>
   <div class="cq-mode-tabs">{tab_html}</div>
   <div class="time-info">KST {NOW_KST.strftime('%Y-%m-%d %H:%M')}</div>
 </div>
@@ -2571,11 +2621,11 @@ if is_usdt_apy:
 
             ch1, ch2 = st.columns(2)
             with ch1:
-                st.markdown("<div style='font-size:.8rem;color:#6B7280;margin-bottom:4px'>APY (%) — 2023.01~ · 7일/20일 이동평균</div>", unsafe_allow_html=True)
-                st.line_chart(_df_apy, height=220, use_container_width=True)
+                st.markdown("<div style='font-size:.8rem;color:#6B7280;margin-bottom:4px'>APY (%) — 2023.01~ · 7일/20일 이동평균 <span style='color:#9CA3AF'>· 드래그하면 그 구간만 확대, 더블클릭하면 원래대로</span></div>", unsafe_allow_html=True)
+                zoomable_line_chart(_df_apy, y_suffix="%")
             with ch2:
-                st.markdown("<div style='font-size:.8rem;color:#6B7280;margin-bottom:4px'>TVL ($M) — 2023.01~</div>", unsafe_allow_html=True)
-                st.line_chart(_df_tvl, height=220, use_container_width=True)
+                st.markdown("<div style='font-size:.8rem;color:#6B7280;margin-bottom:4px'>TVL ($M) — 2023.01~ <span style='color:#9CA3AF'>· 드래그하면 그 구간만 확대, 더블클릭하면 원래대로</span></div>", unsafe_allow_html=True)
+                zoomable_line_chart(_df_tvl)
 
         st.markdown("<br>", unsafe_allow_html=True)
         st.markdown("#### 💹 USDT 풀 APY 전체 순위")

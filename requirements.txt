@@ -6,3 +6,4 @@ google-genai>=1.0.0
 python-dotenv>=1.0.0
 schedule>=1.2.0
 matplotlib>=3.7.0
+plotly>=6.0.0
