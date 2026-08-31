@@ -1460,22 +1460,18 @@ def zoomable_line_chart(df, y_suffix: str = "", height: int = 300) -> None:
 
     df 는 DatetimeIndex 를 갖고, 각 열이 하나의 시리즈가 된다.
 
-    plotly 는 드래그 박스의 세로 폭이 20px 미만이면 x축 전용 확대로 잠근다
-    (plotly.js MINZOOM). 그래서 가로로 납작하게 드래그하면 y축 범위가 전체
-    데이터에 맞춰진 채로 남아, 스파이크 하나 때문에 확대한 구간이 눌려 보인다.
-    x축만 확대된 경우 보이는 구간의 최소·최대에 맞춰 y축을 다시 잡아준다.
+    HY Spread 차트와 같은 st.plotly_chart 경로를 쓴다. Streamlit 이 붙여주는
+    전체화면 버튼을 그대로 얻을 수 있어서다. 이전에는 iframe 안에서 직접 그리며
+    x축만 확대했을 때 y축을 다시 잡아줬지만, 그 훅은 st.plotly_chart 로는
+    걸 수 없다. 세로까지 맞추려면 드래그 박스를 20px 이상 높게 잡거나
+    (plotly.js MINZOOM) 모드바의 autoscale 을 쓰면 된다.
     """
     import plotly.graph_objects as go
 
-    # numpy 배열을 그대로 주면 to_json 이 base64(bdata)로 직렬화해 아래 JS 에서
-    # 읽을 수 없다. 평범한 리스트로 넘겨 JSON 배열로 나가게 한다.
-    xs = [d.isoformat() for d in pd.DatetimeIndex(df.index).to_pydatetime()]
-
     fig = go.Figure()
     for col in df.columns:
-        ys = [None if pd.isna(v) else float(v) for v in df[col]]
         fig.add_trace(go.Scatter(
-            x=xs, y=ys, name=str(col), mode="lines",
+            x=df.index, y=df[col], name=str(col), mode="lines",
             line=dict(color=SERIES_COLORS.get(str(col)), width=1.6),
             hovertemplate="%{x|%Y-%m-%d}<br>%{y:.2f}" + y_suffix + "<extra>" + str(col) + "</extra>",
         ))
@@ -1484,8 +1480,7 @@ def zoomable_line_chart(df, y_suffix: str = "", height: int = 300) -> None:
         dragmode="zoom",
         hovermode="x unified",
         height=height,
-        # 여백이 좁으면 축 눈금과 우측 상단 모드바(팬·확대 버튼)가 잘려
-        # 클릭조차 되지 않는다. 눈금은 automargin 으로 한 번 더 보호한다.
+        # 여백이 좁으면 축 눈금과 모드바가 잘린다.
         margin=dict(l=16, r=16, t=48, b=16),
         paper_bgcolor="#FFFFFF",
         plot_bgcolor="#FFFFFF",
@@ -1500,111 +1495,13 @@ def zoomable_line_chart(df, y_suffix: str = "", height: int = 300) -> None:
     fig.update_xaxes(**axis)
     fig.update_yaxes(**axis, ticksuffix=y_suffix)
 
-    div_id = "zchart-" + str(abs(hash((tuple(df.columns), len(df), y_suffix))))
-    html = _ZOOM_CHART_HTML
-    html = html.replace("__ID__", div_id).replace("__FIG__", fig.to_json())
-    components.html(html, height=height + 16)
-
-
-# x축만 확대됐을 때 y축을 보이는 구간에 맞춰 다시 잡는다.
-# relayout 이벤트에 yaxis 키가 함께 오면 사용자가 세로까지 직접 지정한 것이므로
-# 그대로 존중하고, xaxis 키만 온 경우에만 개입한다.
-#
-# iframe 안에 그리므로 st.line_chart 가 붙여주던 Streamlit 전체화면 버튼이 없다.
-# Streamlit 의 컴포넌트 iframe 허용 목록에 fullscreen 이 들어 있어,
-# 모드바에 직접 전체화면 버튼을 넣어 되살린다.
-_ZOOM_CHART_HTML = """
-<div id="__ID__" style="width:100%"></div>
-<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
-<script>
-(function () {
-  var fig = __FIG__;
-  // 네 모서리 꺾쇠 모양 — 전체화면 아이콘
-  var EXPAND_ICON = {
-    width: 1000, height: 1000,
-    path: "M120,120 H420 V210 H210 V420 H120 Z "
-        + "M880,120 V420 H790 V210 H580 V120 Z "
-        + "M880,880 H580 V790 H790 V580 H880 Z "
-        + "M120,880 V580 H210 V790 H420 V880 Z"
-  };
-  var baseHeight = (fig.layout && fig.layout.height) || 300;
-
-  var cfg = {
-    scrollZoom: true, doubleClick: "reset", displaylogo: false, responsive: true,
-    displayModeBar: true,   // 팬 버튼을 항상 보이게 (hover 시에만 뜨면 찾기 어렵다)
-    modeBarButtonsToRemove: ["select2d", "lasso2d"],
-    modeBarButtonsToAdd: [{
-      name: "fullscreen",
-      title: "전체화면 (Esc 로 나가기)",
-      icon: EXPAND_ICON,
-      click: function () {
-        if (document.fullscreenElement) {
-          document.exitFullscreen();
-        } else {
-          document.documentElement.requestFullscreen();
-        }
-      }
-    }]
-  };
-  var gd = document.getElementById("__ID__");
-  Plotly.newPlot(gd, fig.data, fig.layout, cfg).then(function () {
-    var busy = false;
-
-    // 전체화면에 들어가고 나올 때 차트 높이를 화면에 맞춘다.
-    document.addEventListener("fullscreenchange", function () {
-      var full = !!document.fullscreenElement;
-      document.documentElement.style.background = "#FFFFFF";
-      Plotly.relayout(gd, {height: full ? window.innerHeight - 8 : baseHeight});
-    });
-
-    function visibleYRange() {
-      var xr = gd.layout.xaxis && gd.layout.xaxis.range;
-      if (!xr) return null;
-      var lo = new Date(xr[0]).getTime(), hi = new Date(xr[1]).getTime();
-      var mn = Infinity, mx = -Infinity;
-      // plotly 가 typed array 로 디코딩해 두는 _fullData 를 우선 쓴다.
-      var src = (gd._fullData && gd._fullData.length === gd.data.length)
-                ? gd._fullData : gd.data;
-      src.forEach(function (tr) {
-        if (tr.visible === "legendonly") return;
-        if (!tr.x || !tr.y || !tr.x.length) return;
-        for (var i = 0; i < tr.x.length; i++) {
-          var t = new Date(tr.x[i]).getTime();
-          if (t < lo || t > hi) continue;
-          var v = tr.y[i];
-          if (v === null || v === undefined || isNaN(v)) continue;
-          if (v < mn) mn = v;
-          if (v > mx) mx = v;
-        }
-      });
-      if (!isFinite(mn) || !isFinite(mx)) return null;
-      var pad = (mx - mn) * 0.08 || Math.abs(mx) * 0.08 || 1;
-      return [mn - pad, mx + pad];
-    }
-
-    gd.on("plotly_relayout", function (ev) {
-      if (busy || !ev) return;
-      // 팬 모드에서는 사용자가 보는 창을 그대로 옮기는 것이므로 y 를 건드리지 않는다.
-      if (gd.layout && gd.layout.dragmode === "pan") return;
-      var keys = Object.keys(ev);
-      var touchedY = keys.some(function (k) { return k.indexOf("yaxis") === 0; });
-      var touchedX = keys.some(function (k) { return k.indexOf("xaxis") === 0; });
-      if (!touchedX || touchedY) return;
-
-      busy = true;
-      var done = function () { busy = false; };
-      if (ev["xaxis.autorange"]) {
-        Plotly.relayout(gd, {"yaxis.autorange": true}).then(done, done);
-        return;
-      }
-      var yr = visibleYRange();
-      if (yr) { Plotly.relayout(gd, {"yaxis.range": yr}).then(done, done); }
-      else { busy = false; }
-    });
-  });
-})();
-</script>
-"""
+    st.plotly_chart(fig, use_container_width=True, theme=None, config={
+        "scrollZoom": True,
+        "doubleClick": "reset",
+        "displaylogo": False,
+        "displayModeBar": True,
+        "modeBarButtonsToRemove": ["select2d", "lasso2d"],
+    })
 
 
 def _copy_btn(text: str) -> None:
