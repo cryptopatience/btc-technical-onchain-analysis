@@ -1455,7 +1455,7 @@ SERIES_COLORS = {
 }
 
 
-def zoomable_line_chart(df, y_suffix: str = "", height: int = 300) -> None:
+def zoomable_line_chart(df, y_suffix: str = "", height: int = 340) -> None:
     """드래그로 구간을 선택해 확대할 수 있는 선 그래프를 그린다.
 
     df 는 DatetimeIndex 를 갖고, 각 열이 하나의 시리즈가 된다.
@@ -1480,8 +1480,10 @@ def zoomable_line_chart(df, y_suffix: str = "", height: int = 300) -> None:
         dragmode="zoom",
         hovermode="x unified",
         height=height,
-        # 여백이 좁으면 축 눈금과 모드바가 잘린다.
-        margin=dict(l=16, r=16, t=48, b=16),
+        # 여백은 눈금·모드바뿐 아니라 축 드래그 핸들이 놓이는 자리이기도 하다.
+        # plotly 는 축 바깥 DRAGGERSIZE(20px) 안에 ew/ns·모서리 핸들을 그리는데,
+        # 여백이 그보다 좁으면 핸들이 잘려 축을 끌어 늘이거나 줄일 수 없다.
+        margin=dict(l=56, r=28, t=48, b=44),
         paper_bgcolor="#FFFFFF",
         plot_bgcolor="#FFFFFF",
         font=dict(color="#374151", size=11),
@@ -3125,8 +3127,8 @@ if is_hy_spread:
 
     fig.update_layout(
         dragmode="zoom", hovermode="x unified", height=520,
-        # 여백이 좁으면 축 눈금과 모드바가 잘린다.
-        margin=dict(l=16, r=16, t=48, b=16),
+        # 축 드래그 핸들(DRAGGERSIZE 20px) 자리까지 확보한다.
+        margin=dict(l=64, r=64, t=48, b=44),
         paper_bgcolor="#FFFFFF", plot_bgcolor="#FFFFFF",
         font=dict(color="#374151", size=11),
         legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="left", x=0,
