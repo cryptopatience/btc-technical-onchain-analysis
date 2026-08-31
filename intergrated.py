@@ -1455,7 +1455,7 @@ SERIES_COLORS = {
 }
 
 
-def zoomable_line_chart(df, y_suffix: str = "", height: int = 260) -> None:
+def zoomable_line_chart(df, y_suffix: str = "", height: int = 300) -> None:
     """드래그로 구간을 선택해 확대할 수 있는 선 그래프를 그린다.
 
     df 는 DatetimeIndex 를 갖고, 각 열이 하나의 시리즈가 된다.
@@ -1484,7 +1484,9 @@ def zoomable_line_chart(df, y_suffix: str = "", height: int = 260) -> None:
         dragmode="zoom",
         hovermode="x unified",
         height=height,
-        margin=dict(l=8, r=8, t=8, b=8),
+        # 여백이 좁으면 축 눈금과 우측 상단 모드바(팬·확대 버튼)가 잘려
+        # 클릭조차 되지 않는다. 눈금은 automargin 으로 한 번 더 보호한다.
+        margin=dict(l=16, r=16, t=48, b=16),
         paper_bgcolor="#FFFFFF",
         plot_bgcolor="#FFFFFF",
         font=dict(color="#374151", size=11),
@@ -1493,32 +1495,67 @@ def zoomable_line_chart(df, y_suffix: str = "", height: int = 260) -> None:
         showlegend=True,
     )
     axis = dict(gridcolor="#EEF1F5", linecolor="#E5E7EB",
-                zeroline=False, showspikes=False, fixedrange=False)
+                zeroline=False, showspikes=False, fixedrange=False,
+                automargin=True)
     fig.update_xaxes(**axis)
     fig.update_yaxes(**axis, ticksuffix=y_suffix)
 
     div_id = "zchart-" + str(abs(hash((tuple(df.columns), len(df), y_suffix))))
     html = _ZOOM_CHART_HTML
     html = html.replace("__ID__", div_id).replace("__FIG__", fig.to_json())
-    components.html(html, height=height + 12)
+    components.html(html, height=height + 16)
 
 
 # x축만 확대됐을 때 y축을 보이는 구간에 맞춰 다시 잡는다.
 # relayout 이벤트에 yaxis 키가 함께 오면 사용자가 세로까지 직접 지정한 것이므로
 # 그대로 존중하고, xaxis 키만 온 경우에만 개입한다.
+#
+# iframe 안에 그리므로 st.line_chart 가 붙여주던 Streamlit 전체화면 버튼이 없다.
+# Streamlit 의 컴포넌트 iframe 허용 목록에 fullscreen 이 들어 있어,
+# 모드바에 직접 전체화면 버튼을 넣어 되살린다.
 _ZOOM_CHART_HTML = """
 <div id="__ID__" style="width:100%"></div>
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 <script>
 (function () {
   var fig = __FIG__;
+  // 네 모서리 꺾쇠 모양 — 전체화면 아이콘
+  var EXPAND_ICON = {
+    width: 1000, height: 1000,
+    path: "M120,120 H420 V210 H210 V420 H120 Z "
+        + "M880,120 V420 H790 V210 H580 V120 Z "
+        + "M880,880 H580 V790 H790 V580 H880 Z "
+        + "M120,880 V580 H210 V790 H420 V880 Z"
+  };
+  var baseHeight = (fig.layout && fig.layout.height) || 300;
+
   var cfg = {
     scrollZoom: true, doubleClick: "reset", displaylogo: false, responsive: true,
-    modeBarButtonsToRemove: ["select2d", "lasso2d"]
+    displayModeBar: true,   // 팬 버튼을 항상 보이게 (hover 시에만 뜨면 찾기 어렵다)
+    modeBarButtonsToRemove: ["select2d", "lasso2d"],
+    modeBarButtonsToAdd: [{
+      name: "fullscreen",
+      title: "전체화면 (Esc 로 나가기)",
+      icon: EXPAND_ICON,
+      click: function () {
+        if (document.fullscreenElement) {
+          document.exitFullscreen();
+        } else {
+          document.documentElement.requestFullscreen();
+        }
+      }
+    }]
   };
   var gd = document.getElementById("__ID__");
   Plotly.newPlot(gd, fig.data, fig.layout, cfg).then(function () {
     var busy = false;
+
+    // 전체화면에 들어가고 나올 때 차트 높이를 화면에 맞춘다.
+    document.addEventListener("fullscreenchange", function () {
+      var full = !!document.fullscreenElement;
+      document.documentElement.style.background = "#FFFFFF";
+      Plotly.relayout(gd, {height: full ? window.innerHeight - 8 : baseHeight});
+    });
 
     function visibleYRange() {
       var xr = gd.layout.xaxis && gd.layout.xaxis.range;
@@ -1547,6 +1584,8 @@ _ZOOM_CHART_HTML = """
 
     gd.on("plotly_relayout", function (ev) {
       if (busy || !ev) return;
+      // 팬 모드에서는 사용자가 보는 창을 그대로 옮기는 것이므로 y 를 건드리지 않는다.
+      if (gd.layout && gd.layout.dragmode === "pan") return;
       var keys = Object.keys(ev);
       var touchedY = keys.some(function (k) { return k.indexOf("yaxis") === 0; });
       var touchedX = keys.some(function (k) { return k.indexOf("xaxis") === 0; });
@@ -3189,18 +3228,23 @@ if is_hy_spread:
 
     fig.update_layout(
         dragmode="zoom", hovermode="x unified", height=520,
-        margin=dict(l=8, r=8, t=8, b=8),
+        # 여백이 좁으면 축 눈금과 모드바가 잘린다.
+        margin=dict(l=16, r=16, t=48, b=16),
         paper_bgcolor="#FFFFFF", plot_bgcolor="#FFFFFF",
         font=dict(color="#374151", size=11),
         legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="left", x=0,
                     title_text=""),
     )
-    fig.update_xaxes(gridcolor="#EEF1F5", linecolor="#E5E7EB", zeroline=False)
+    fig.update_xaxes(gridcolor="#EEF1F5", linecolor="#E5E7EB", zeroline=False,
+                     automargin=True)
     fig.update_yaxes(title_text="HY Spread (%)", secondary_y=False, rangemode="tozero",
-                     gridcolor="#EEF1F5", linecolor="#E5E7EB", zeroline=False)
-    fig.update_yaxes(title_text="S&P 500", secondary_y=True, showgrid=False)
+                     gridcolor="#EEF1F5", linecolor="#E5E7EB", zeroline=False,
+                     automargin=True)
+    fig.update_yaxes(title_text="S&P 500", secondary_y=True, showgrid=False,
+                     automargin=True)
     st.plotly_chart(fig, use_container_width=True, theme=None, config={
         "scrollZoom": True, "doubleClick": "reset", "displaylogo": False,
+        "displayModeBar": True,
         "modeBarButtonsToRemove": ["select2d", "lasso2d"],
     })
 
